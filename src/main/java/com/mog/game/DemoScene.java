@@ -290,7 +290,11 @@ public class DemoScene implements Scene {
 
     /**
      * 骨骼动画展示：CesiumMan 行走循环（glTF 蒙皮 + 单动画）。
-     * 归一化到 1.7 米高（人体尺度），面向相机。
+     *
+     * 坐标系注意：CesiumMan 是 Z-up 资产（COLLADA2GLTF 产物，根节点名就叫 Z_UP）——
+     * 顶点 Z 轴才是"高"（0=脚底 ~ 1.51=头顶），X=身宽，Y=步幅。
+     * 处理：绕 X 轴 -90° 立正（Z-up -> Y-up），再绕模型自身 Z 轴 180° 面向初始相机；
+     * 归一化高度取 Z 跨度；脚底在 z=0，立正后正好落在实体原点（贴地无需偏移）。
      */
     private void createDancer() {
         LoadedModel man = acquire(DANCER_MODEL, LoadedModel.class);
@@ -299,13 +303,14 @@ public class DemoScene implements Scene {
             return;
         }
         float[] aabb = man.getAabb();
-        float s = DANCER_TARGET_HEIGHT / man.getHeight();
+        float s = DANCER_TARGET_HEIGHT / (aabb[5] - aabb[2]); // Z 跨度 = 真实身高
 
         int e = world.createEntity("dancer");
         TransformComponent t = new TransformComponent();
-        t.getPosition().set(-2.2f, GROUND_Y - aabb[1] * s, 3.0f);
+        t.getPosition().set(-2.2f, GROUND_Y, 3.0f);
         t.getScale().set(s, s, s);
-        t.getRotation().set(0, 0.5f, 0); // 稍微侧身面向初始相机
+        // 本地矩阵按 T·Rx·Ry·Rz·S 组合：Rz(180°) 先转朝向，Rx(-90°) 再立正
+        t.getRotation().set(-(float) (Math.PI / 2), 0, (float) Math.PI);
         world.addComponent(e, t);
         world.addComponent(e, new MeshComponent(man.getMesh(0)));
         if (man.getTexture(0) != null) {
@@ -317,6 +322,7 @@ public class DemoScene implements Scene {
         // 动画组件：第 0 段动画，1 倍速，循环播放（骨骼矩阵由 AnimationSystem 写入）
         world.addComponent(e, new AnimationComponent(
                 man.getAnimations().get(0), man.getSkeleton(), 1.0f, true));
+        world.addComponent(e, new ColliderComponent(0.4f, 0.85f, 0.4f));
     }
 
     /**
