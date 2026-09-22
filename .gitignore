@@ -1,0 +1,33 @@
+# Build output
+target/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# JVM 崩溃转储与性能分析文件（动辄上 GB，严禁入库）
+hs_err_pid*
+replay_pid*
+*.mdmp
+*.dmp
+*.hprof
+
+# shade 插件副产物（每次构建重新生成）
+dependency-reduced-pom.xml
+
+# 存档（运行时生成）
+saves/
