@@ -39,6 +39,10 @@ public class GravitySimulation {
      * ε=0.05 时 r≥1 的轨道力学误差 <0.3%，游戏尺度下可忽略。
      */
     public static final double SOFTENING = 0.05;
+    /** 自适应子步的安全系数（dt_safe = ETA·r_ij/v_rel_ij；0.0005 = 收敛性验证档） */
+    private static final double ETA = 0.0005;
+    /** 单步子步数上限（性能护栏：极深交会时宁可略失准也不拖垮帧预算） */
+    private static final int MAX_SUBSTEPS = 512;
 
     private final int starCount = 3;
     /** 恒星质量（种子随机 0.9~1.1；质光关系 L=m^3.5 驱动显示亮度与纪元温度模型） */
@@ -155,8 +159,92 @@ public class GravitySimulation {
         vel[i].set(vx, vy, vz);
     }
 
-    /** KDK Leapfrog 单步。 */
+    /**
+     * 重置为穿越家族混沌构型（层级骨架+强制深交，见 {@link TripleConfigs#crossing}）。
+     */
+    public void resetCrossing(long seed, double ratio) {
+        applyState(TripleConfigs.crossing(new Random(seed), ratio));
+    }
+
+    /**
+     * 重置为三角家族混沌构型（随机维里化三体，见 {@link TripleConfigs#triangle}）。
+     */
+    public void resetTriangle(long seed, double scale, double beta) {
+        applyState(TripleConfigs.triangle(new Random(seed), scale, beta));
+    }
+
+    /** 当前行星到最近恒星的距离（工具/玩法层判定宿主用）。 */
+    public double planetNearestDist() {
+        double dMin = Double.MAX_VALUE;
+        for (int i = 0; i < starCount; i++) {
+            dMin = Math.min(dMin, planetPos.distance(pos[i]));
+        }
+        return dMin;
+    }
+
+    /** 应用外部构型工厂生成的初始状态快照。 */
+    private void applyState(TripleState st) {
+        for (int i = 0; i < 3; i++) {
+            mass[i] = st.mass[i];
+            pos[i].set(st.starPos[i]);
+            vel[i].set(st.starVel[i]);
+        }
+        planetPos.set(st.planetPos);
+        planetVel.set(st.planetVel);
+        time = 0;
+    }
+
+    /**
+     * 三恒星系统的总机械能（含 Plummer 软化势能；行星无质量不计入）。
+     * 守恒性 = 积分器精度的诊断量：|E/E0 - 1| 应在 1e-6 以下。
+     */
+    public double totalEnergy() {
+        double ke = 0;
+        for (int i = 0; i < starCount; i++) {
+            ke += 0.5 * mass[i] * vel[i].lengthSquared();
+        }
+        double pe = 0;
+        Vector3d d = new Vector3d();
+        double soft2 = SOFTENING * SOFTENING;
+        for (int i = 0; i < starCount; i++) {
+            for (int j = i + 1; j < starCount; j++) {
+                double r = Math.sqrt(d.set(pos[j]).sub(pos[i]).lengthSquared() + soft2);
+                pe -= G * mass[i] * mass[j] / r;
+            }
+        }
+        return ke + pe;
+    }
+
+    /** KDK Leapfrog 单步（外层：交会期自适应子步细分）。
+     *  致密混沌构型下恒星近距相遇时固定步长会失准（产生假弹射），
+     *  子步数按 dt_safe = ETA·r_min/v_max 估计，封顶 MAX_SUBSTEPS 防性能塌方。 */
     public void step(double dt) {
+        int n = substeps(dt);
+        double h = dt / n;
+        for (int k = 0; k < n; k++) {
+            leapfrogKDK(h);
+        }
+    }
+
+    /** 自适应子步估计：逐对取 r_ij/v_rel_ij 最小值约束单步轨道角（相对速度口径，深交会更准）。 */
+    private int substeps(double dt) {
+        double dtSafe = Double.MAX_VALUE;
+        Vector3d dv = new Vector3d();
+        for (int i = 0; i < starCount; i++) {
+            for (int j = i + 1; j < starCount; j++) {
+                double r = pos[i].distance(pos[j]);
+                double v = dv.set(vel[i]).sub(vel[j]).length();
+                dtSafe = Math.min(dtSafe, ETA * r / Math.max(v, 1e-12));
+            }
+            double r = pos[i].distance(planetPos);
+            double v = dv.set(vel[i]).sub(planetVel).length();
+            dtSafe = Math.min(dtSafe, ETA * r / Math.max(v, 1e-12));
+        }
+        int n = (int) Math.ceil(dt / Math.max(dtSafe, 1e-12));
+        return Math.max(1, Math.min(MAX_SUBSTEPS, n));
+    }
+
+    private void leapfrogKDK(double dt) {
         computeAccelerations();
         // Kick(半)
         for (int i = 0; i < starCount; i++) {
