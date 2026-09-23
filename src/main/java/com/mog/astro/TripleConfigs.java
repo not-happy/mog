@@ -25,10 +25,15 @@ import java.util.Random;
  */
 public final class TripleConfigs {
 
-    /** 内双星半长轴（系统尺度单位） */
-    public static final double A_IN = 4.0;
-    /** 穿越家族行星出生半径：深入宿主希尔球（r=1 时贴 Holman-Wiegert 临界 1.08，实测必死） */
-    public static final double PLANET_R_CROSSING = 0.5;
+    /** 内双星半长轴（系统尺度单位）。
+     *  测量档 4.0 -> 游戏档 10.0：动力学时标 ×(10/4)^1.5≈3.95（拍板点1：整体放大标定真实时间）。
+     *  游戏尺度 40 种子实测：局长中位 196 年 [P25 118, P75 322]，
+     *  默认倍速 x0.5 下中位局长 ≈41 真实分钟（GDD 目标窗口 30-60 分钟） */
+    public static final double A_IN = 10.0;
+    /** 游戏默认致密度（拍板点1：穿越家族 ratio=4.0）。
+     *  游戏尺度实测：终局 = 行星死亡 52%（坠焚 45/失家 7）/ 恒星弹射 48%，
+     *  近距交会 7.0 次/局（plunging 期集中爆发），易天 0.4 次/局 */
+    public static final double RATIO_GAME_DEFAULT = 4.0;
     /** 三角家族行星出生半径系数（×scale）：0.15 实测中位 14-44 年速死（希尔球在交会中反复崩塌），
      *  收紧到 0.08 让行星寿命与乐章解体时标竞争 */
     public static final double PLANET_R_TRI_FACTOR = 0.08;
@@ -40,12 +45,13 @@ public final class TripleConfigs {
      * 穿越家族：层级骨架但强制深交——第三星近日点 q_out = a_out(1-e_out) 直插双星区域。
      * 节奏特征：平静期(外轨巡航) -> 周期性 plunging 交会 -> 交换/弹射。
      * 致密度旋钮 ratio = a_out/a_in；e_out ∈ [0.55, 0.85] 保证 q_out ≤ ~2×a_in。
+     * 行星出生半径 = 历法锚点 ∛(G·m_host)（周期恰 2π = 1 游戏年）。
      *
      * @param rnd   种子化随机源
-     * @param ratio 致密度旋钮 a_out/a_in（2.5=每圈必搅，5=温和扰动）
+     * @param ratio 致密度旋钮 a_out/a_in（2.5=每圈必搅，5=温和扰动；游戏档 4.0）
      */
     public static TripleState crossing(Random rnd, double ratio) {
-        return buildHier(rnd, ratio, 0.55 + rnd.nextDouble() * 0.30, PLANET_R_CROSSING);
+        return buildHier(rnd, ratio, 0.55 + rnd.nextDouble() * 0.30, 0);
     }
 
     /**
@@ -219,7 +225,8 @@ public final class TripleConfigs {
         int host = rnd.nextInt(2);
         Vector3d hp = st.starPos[host];
         Vector3d hv = st.starVel[host];
-        double r = planetR;
+        // planetR<=0 -> 历法锚点模式：r = ∛(G·m_host)，轨道周期恰为 2π = 1 游戏年
+        double r = planetR > 0 ? planetR : Math.cbrt(GravitySimulation.G * st.mass[host]);
         // 轨道面 = 内双星面：法线 n = normalize(rIn × vIn)
         Vector3d n = new Vector3d(rIn).cross(vIn);
         if (n.lengthSquared() < 1e-12) {

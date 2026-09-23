@@ -26,10 +26,11 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_MINUS;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
 
 /**
- * 宇宙场景（C1 星系模拟核心）：观赏三颗恒星的 8 字形混沌之舞与行星的命运。
+ * 宇宙场景（C1 星系模拟核心）：观赏穿越家族混沌三重星之舞与行星的命运。
  *
- * 构成：三体积分模拟（CosmosSimSystem）+ HDR 发光恒星（顶点色 >1 触发泛光）
- * + 轨道残影线（TrailRenderer）+ 轨道环绕相机（OrbitCameraRig）。
+ * 构成：三体积分模拟（CosmosSimSystem，游戏默认构型 ratio=4.0/A_IN=10）
+ * + HDR 发光恒星（顶点色 >1 触发泛光）+ 轨道残影线（TrailRenderer）
+ * + 轨道环绕相机（OrbitCameraRig）+ 易天/终局事件（HostTracker/FateJudge 驱动）。
  *
  * 操作：左键拖拽旋转 / 滚轮缩放 / 空格暂停 / +- 倍速 / Tab 返回地表。
  */
@@ -44,8 +45,10 @@ public class CosmosScene implements Scene {
             {1.9f, 2.3f, 3.4f},   // 曜三 蓝白
     };
     private static final float[] PLANET_COLOR = {0.25f, 0.5f, 0.85f};
-    private static final float STAR_SCALE = 3.0f;    // 恒星显示直径（模拟中是质点）
-    private static final float PLANET_SCALE = 0.8f;
+    /** 显示尺寸（模拟中是质点）：游戏尺度 A_IN=10 下相机拉远至 ~170，
+     *  显示直径同步放大以保持与旧尺度相当的视觉占比 */
+    private static final float STAR_SCALE = 4.5f;
+    private static final float PLANET_SCALE = 1.2f;
 
     private final EventBus eventBus;
     private final World world = new World();
@@ -59,7 +62,7 @@ public class CosmosScene implements Scene {
     private TrailRenderer trails;
     private OrbitCameraRig cameraRig;
     private final List<Mesh> ownedMeshes = new ArrayList<>();
-    /** 调试加速：初始倍速（<=0 表示用系统默认 1.25），来自启动参数 --speed N */
+    /** 调试加速：初始倍速（<=0 表示用系统默认 0.5），来自启动参数 --speed N */
     private final double initialSpeed;
 
     public CosmosScene(EventBus eventBus) {
@@ -113,7 +116,9 @@ public class CosmosScene implements Scene {
         world.addSystem(simSystem);
 
         cameraRig = new OrbitCameraRig(camera);
-        log.info("宇宙场景就绪: 三体模拟种子={} (层级三重星: 双星+偏心第三星)", sim.getSeed());
+        log.info("宇宙场景就绪: 三体模拟种子={} (穿越家族混沌三重星: ratio=4.0, a_in=10, a_out=40; "
+                        + "实测局长中位 196 年≈41 分钟, 终局=行星死亡 52%/恒星弹射 48%)",
+                sim.getSeed());
     }
 
     @Override
@@ -144,12 +149,18 @@ public class CosmosScene implements Scene {
         var epoch = simSystem.getCurrentEpoch();
         String epochName = epoch != null ? epoch.type().getDisplayName() : "初始化…";
         double temp = epoch != null ? epoch.temperature() : 0;
+        var ht = simSystem.getHostTracker();
+        String endingMark = simSystem.isRunEnded()
+                ? "   【乐章终结: " + simSystem.getEnding().getDisplayName() + "】"
+                : "";
         return List.of(
-                String.format("纪元: %s   温度指数: %.3f   %s", epochName, temp,
-                        simSystem.isPaused() ? "[已暂停]" : ""),
-                String.format("文明历: %s   倍速: x%.2f   种子: %d",
-                        GameCalendar.format(sim.getTime()), simSystem.getSpeed(), sim.getSeed()),
-                "空格 暂停   +/- 倍速   左键拖拽 旋转   滚轮 缩放   Tab 返回地表");
+                String.format("纪元: %s   温度指数: %.3f   %s%s", epochName, temp,
+                        simSystem.isPaused() ? "[已暂停]" : "", endingMark),
+                String.format("文明历: %s   宿主星: 曜%d   易天: %d 次   倍速: x%.2f",
+                        GameCalendar.format(sim.getTime()), ht.getHost() + 1,
+                        ht.getSwitchCount(), simSystem.getSpeed()),
+                String.format("种子: %d   空格 暂停   +/- 倍速   左键拖拽 旋转   滚轮 缩放   Tab 返回地表",
+                        sim.getSeed()));
     }
 
     @Override

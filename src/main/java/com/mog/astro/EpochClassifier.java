@@ -11,30 +11,35 @@ import org.joml.Vector3d;
  */
 public class EpochClassifier {
 
-    // ===== 平衡性参数（层级构型：行星 r=1 绕双星成员 A，伴星 B 距 ~4，第三星 C 距 ~18-24；
-    //       出生温度基线 T≈1.07）=====
+    // ===== 平衡性参数（穿越构型游戏尺度 A_IN=10：行星 r≈1 绕双星成员，伴星距 ~8.5-11.5，
+    //       第三星 6~49 周期性深交；出生温度基线 T≈1.07 与旧尺度一致（历法锚点轨道）=====
     /** 灼热阈值：T 超过即烈曜（出生基线 1.07，宿主星 d<0.75 时触发） */
     private static final double SCORCH_T = 1.8;
     /** 严寒阈值：T 低于即寒曜（宿主星 d>1.5 时触发） */
     private static final double FREEZE_T = 0.45;
-    /** 序曜判定：唯一近星距离上限 */
+    /** 序曜判定：唯一近星距离上限（系于出生半径 ~1，不随系统尺度缩放） */
     private static final double ORDER_NEAR_DIST = 1.8;
-    /** 序曜判定：其余恒星的最小安全距离（双星伴星最近 ~3，不误伤） */
+    /** 序曜判定：其余恒星的最小安全距离（双星伴星距 ~10 恒安全——
+     *  序曜期 = 平静巡航期的管理窗口，只有第三星 plunging 侵入才会打破） */
     private static final double ORDER_FAR_DIST = 2.5;
-    /** 掠曜判定：接近速率阈值（距离变化率，单位/时间）与预警距离 */
-    private static final double FLYBY_APPROACH_RATE = 1.5;
-    private static final double FLYBY_DIST = 5.0;
+    /** 掠曜判定：接近速率阈值（距离变化率，单位/时间）。
+     *  速度尺度 ∝ 系统尺度^-0.5：A_IN 4->10 后由 1.5 缩至 0.9（×√(4/10)） */
+    private static final double FLYBY_APPROACH_RATE = 0.9;
+    /** 掠曜预警距离：0.8×A_IN，覆盖第三星深交段（q_out ∈ [6,18]） */
+    private static final double FLYBY_DIST = 8.0;
     /** 三曜凌空：从行星看两两恒星夹角阈值（弧度，~26°） */
     private static final double SYZYGY_ANGLE = 0.45;
     /**
-     * 三曜凌空的距离条件：三颗恒星全部逼近到此距离内才算"凌空"。
+     * 三曜凌空的距离条件：三颗恒星全部逼近到此距离内才算"凌空"（0.6×A_IN）。
      * 没有此条件时，行星绕双星成员公转每年都会与伴星视觉成列——凌空沦为日常。
      * 加上它后，凌空 = 第三星也杀到近前的真·三星汇聚（终局级灾难前兆）。
      */
     private static final double SYZYGY_DIST = 6.0;
     /**
-     * 失家判定：行星与全部恒星的距离超过此值即视为被弹射出系统。
-     * 注意需大于最大轨道尺度（a_out 上限 48 时行星随远星可达 ~45），防误判。
+     * 失家预警：行星与全部恒星的距离超过此值即『失家深空』纪元（叙事预警线）。
+     * 游戏尺度下随远星至远日点的束缚行星最远可达 ~50，60 仍有裕量防误判。
+     * 正式失家终局由 {@link FateJudge#ESCAPE_DIST}(=100) 判定，两者分工：
+     * 60 起天空变黑进入倒计时演出，100 才冻结乐章触发结算。
      */
     private static final double LOST_DIST = 60.0;
 

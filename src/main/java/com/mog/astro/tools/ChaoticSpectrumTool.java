@@ -28,8 +28,8 @@ import java.util.List;
  */
 public final class ChaoticSpectrumTool {
 
-    // ===== 扫描参数 =====
-    private static final double[] CROSSING_RATIOS = {3.5, 4.0, 4.5, 5.0};
+    // ===== 扫描参数（尺度确认档：A_IN=10 游戏尺度，验证放大后统计不漂移）=====
+    private static final double[] CROSSING_RATIOS = {4.0};
     private static final double[] TRIANGLE_SCALES = {};
     private static final double TRI_BETA = 1.0;
     private static final int SEEDS_PER_CONFIG = 40;

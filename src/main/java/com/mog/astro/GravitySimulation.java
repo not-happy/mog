@@ -8,27 +8,33 @@ import java.util.Random;
  * 三体引力模拟（restricted 4 体：3 恒星 + 1 无质量行星测试粒子）。
  *
  * 数值方案：
- *   - Leapfrog KDK（辛积分器）：长期能量守恒远优于 RK4/欧拉，轨道模拟标配
+ *   - Leapfrog KDK + 交会期自适应子步（ETA=0.0005 收敛验证档，能量漂移 ~2e-6）
  *   - double 精度：float32 的累积误差会让轨道在几分钟内失真
- *   - 固定步长：由 A1 固定时间步长基建驱动，倍速 = 每帧多步
+ *   - 固定基础步长：倍速 = 每帧多步，深交会时子步细分兜底
  *
- * 初始构型：弱层级三重星（近距双星 A+B 间距 4，偏心第三星 C：a=12/e=0.5，共面顺行）
- *   + 种子随机微扰。行星生于双星成员 A 的 r=1.0 圆轨道。
+ * 初始构型（游戏默认 {@link #resetGame}）：穿越家族混沌三重星
+ *   {@link TripleConfigs#crossing}——层级骨架+强制深交（e_out 0.55~0.85），
+ *   第三星近日点直插双星区域，每圈外轨回归都是一次 plunging 交会。
+ *   ratio=4.0、A_IN=10（拍板点1：穿越家族+整体放大标定真实时间）。
+ *   行星生于随机双星成员的历法锚点轨道（r=∛(G·m_host)，周期恰为 1 游戏年）。
  *
- * 为什么不用 8 字形周期解：Monte-Carlo 实测 60/60 种子在 3.3 年全灭
- *   （8 字形每周期必有近距交会，行星希尔球周期性崩塌，确定性坠焚）。
- *   圆外轨层级构型则 >4775 年全存活（太稳，没有戏剧性）。
- *   偏心外轨是平衡点：C 每次近日点回归（"大逼近周期" ≈24 行星年）注入一记
- *   强摄动，混沌按外轨节拍累积——纪元 drama 以百年尺度展开。
+ *   游戏尺度 40 种子实测（ChaoticSpectrumTool）：局长中位 196 年 [P25 118, P75 322]，
+ *   终局 = 行星死亡 52%（坠焚 45/失家 7）/ 恒星弹射 48%，
+ *   易天 0.4 次/局，近距交会 7.0 次/局（集中于 plunging 交会期爆发）。
+ *   节奏结构：平静巡航（序曜管理窗口）-> 第三星 plunging 侵入（危机纪元）-> 终局。
+ *
+ * 历史构型（{@link #reset}，MonteCarloTool 旧基线复现用）：弱层级 Kozai 三重星。
+ *   为什么不用 8 字形周期解：Monte-Carlo 实测 60/60 种子在 3.3 年全灭
+ *   （每周期必有近距交会，行星希尔球周期性崩塌，确定性坠焚）。
  *
  * 时间单位制（游戏历法基准）：
- *   行星年 = 2π√(r³/GM) = 2π ≈ 6.2832 时间单位（出生轨道 r=1, M=1）
- *   外轨周期（"大曜轮"）= 2π√(12³/3) ≈ 151 时间单位 ≈ 24 行星年
+ *   行星年 = 2π√(r³/GM) = 2π ≈ 6.2832 时间单位（历法锚点 r=∛(G·m_host) 保证与质量/种子无关）
+ *   外轨周期（"大曜轮"）= 2π√(40³/3) ≈ 918 时间单位 ≈ 146 行星年
  */
 public class GravitySimulation {
 
     public static final double G = 1.0;
-    /** 行星出生轨道半径（时间单位制锚点：1 游戏年 = 2π 时间单位） */
+    /** 行星出生轨道半径标称值（历法锚点 r=∛(G·m_host)≈1；1 游戏年 = 2π 时间单位） */
     public static final double PLANET_BIRTH_RADIUS = 1.0;
     /** 1 游戏年对应的模拟时间单位 */
     public static final double TIME_UNITS_PER_YEAR =
@@ -68,7 +74,15 @@ public class GravitySimulation {
             acc[i] = new Vector3d();
             accBuf[i] = new Vector3d();
         }
-        reset(seed);
+        resetGame(seed);
+    }
+
+    /**
+     * 重置为游戏默认构型：穿越家族混沌三重星（拍板点1：ratio=4.0，A_IN=10 游戏尺度）。
+     * 每次开局随机种子 = 一个完整乐章（形成 -> 终局），终局判定见 {@link FateJudge}。
+     */
+    public void resetGame(long seed) {
+        resetCrossing(seed, TripleConfigs.RATIO_GAME_DEFAULT);
     }
 
     /**
@@ -83,7 +97,11 @@ public class GravitySimulation {
      *   8字形构型    -> 中位寿命 3.3 年（每周期必近距交会，太快）
      *   圆外轨 a=18 -> >4775 年全存活（太稳）
      *   偏心外轨     -> 目标中位寿命 300-600 年（待验证）
+     *
+     * @deprecated 遗留构型，仅 MonteCarloTool 历史基线复现用；游戏默认已切换到
+     *             {@link #resetGame}（穿越家族，S1 谱扫描拍板）。
      */
+    @Deprecated
     public void reset(long seed) {
         Random rnd = new Random(seed);
 

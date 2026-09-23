@@ -13,17 +13,21 @@ import java.util.Map;
 /**
  * 平衡性工具：蒙特卡洛批量模拟，统计文明轨道寿命分布。
  *
+ * 遗留基线工具：S1 拍板已由 ChaoticSpectrumTool 取代（穿越家族 ratio=4.0），
+ * 本工具保留用于复现 GDD 附录的历史数据——显式调用 reset() 回到旧的
+ * 弱层级构型（GravitySimulation 构造默认已切换为穿越家族）。
+ *
  * 运行（无需图形环境）：
  *   java -cp target/mog-engine-*.jar com.mog.astro.tools.MonteCarloTool [样本数]
  *
- * 死因判据（与 EpochClassifier 阈值联动调整）：
+ * 死因判据（与旧版 EpochClassifier 阈值联动调整）：
  *   - 坠入/掠焚：行星与任一恒星距离 < 0.6（出生轨道 r=1.0 内侧深处）
  *   - 弹射失家：行星与全部恒星距离 > 35（LOST_DIST）
  *
  * 历史实测：
  *   8字形构型        中位 3.3 年（60/60 坠焚）——每周期必近距交会，弃用
  *   层级圆外轨 a=18  >4775 年全存活——太稳无戏剧性，弃用
- *   层级偏心 e=0.5   P25=181 年, 中位 2306 年, 47% 长寿——当前采用
+ *   层级偏心 e=0.5   P25=181 年, 中位 2306 年, 47% 长寿——旧采用（已被穿越家族取代）
  */
 public final class MonteCarloTool {
 
@@ -39,6 +43,12 @@ public final class MonteCarloTool {
     private MonteCarloTool() {
     }
 
+    /** 隔离 deprecation 警告：本工具的职责就是复现旧构型基线。 */
+    @SuppressWarnings("deprecation")
+    private static void resetLegacy(GravitySimulation sim) {
+        sim.reset(sim.getSeed());
+    }
+
     public static void main(String[] args) {
         int n = args.length > 0 ? Integer.parseInt(args[0]) : 60;
         List<Double> deathYears = new ArrayList<>();
@@ -47,6 +57,7 @@ public final class MonteCarloTool {
 
         for (int s = 0; s < n; s++) {
             GravitySimulation sim = new GravitySimulation(0x9E3779B97F4A7C15L * (s + 1));
+            resetLegacy(sim);   // 显式回到旧层级构型（构造默认已是穿越家族）
             String cause = "存活";
             double tDeath = T_MAX;
             outer:

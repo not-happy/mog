@@ -1,10 +1,16 @@
 package com.mog.game;
 
+import com.mog.astro.EndingType;
 import com.mog.astro.Epoch;
 import com.mog.astro.EpochClassifier;
+import com.mog.astro.FateJudge;
+import com.mog.astro.GameCalendar;
 import com.mog.astro.GravitySimulation;
+import com.mog.astro.HostTracker;
 import com.mog.core.event.EpochChangedEvent;
 import com.mog.core.event.EventBus;
+import com.mog.core.event.HostChangedEvent;
+import com.mog.core.event.RunEndedEvent;
 import com.mog.ecs.GameSystem;
 import com.mog.ecs.World;
 import com.mog.ecs.components.TransformComponent;
@@ -16,6 +22,10 @@ import org.slf4j.LoggerFactory;
 /**
  * 星系模拟系统：以固定子步长推进三体积分（倍速 = 每帧多步），
  * 同步天体实体 Transform、维护轨道残影环形缓冲、实时纪元分类并发布事件。
+ *
+ * 玩法层职责（S2）：逐步判定易天（HostTracker -> HostChangedEvent）
+ * 与乐章终局（FateJudge -> RunEndedEvent，首个终局事件后冻结物理步进），
+ * 口径与 ChaoticSpectrumTool 测量一致——玩家经历的分布 = 扫描测得的分布。
  *
  * 模拟与渲染解耦：本系统是 GameSystem（进 World 调度），
  * 残影顶点数组每帧重建后交给 TrailRenderer（渲染由场景在 overlay 阶段触发）。
@@ -33,8 +43,9 @@ public class CosmosSimSystem implements GameSystem {
     private static final double MAX_SPEED = 120.0;
     /** 每条轨迹的环形缓冲容量 */
     public static final int TRAIL_CAP = 2400;
-    /** 每 N 个积分步记录一个轨迹点（外轨周期 ~537 单位，间隔 40 步使残影覆盖 ~1/3 外轨） */
-    private static final int RECORD_EVERY = 40;
+    /** 每 N 个积分步记录一个轨迹点（外轨周期 ~918 单位，2400 点×200 步×0.002 = 960 单位
+     *  ≈ 覆盖一整圈外轨残影——第三星的 plunging 俯冲轨迹完整可见） */
+    private static final int RECORD_EVERY = 200;
 
     /** 天体显示颜色（恒星 >1 = HDR，触发泛光；行星暗色） */
     private static final float[][] BODY_COLORS = {
@@ -50,6 +61,8 @@ public class CosmosSimSystem implements GameSystem {
     private final int[] starEntities;
     private final int planetEntity;
     private final TrailRenderer trails;
+    /** 宿主星追踪（易天事件源；构造时采样 t=0 宿主与出生半径） */
+    private final HostTracker hostTracker;
 
     // 轨迹环形缓冲（SoA）
     private final float[][] ringX = new float[4][TRAIL_CAP];
@@ -65,9 +78,15 @@ public class CosmosSimSystem implements GameSystem {
     private int stepCounter;
     private Epoch currentEpoch;
 
+    // ===== 乐章终局状态（FateJudge 判定，首个终局事件后冻结物理步进）=====
+    private boolean runEnded;
+    private EndingType ending;
+    private int ejectedStar = -1;
+
     /** 模拟速度（模拟时间单位/真实秒）与暂停状态（由场景 handleInput 控制）。
-     *  默认 1.25：1 游戏年(2π 单位) ≈ 5 真实秒，中位局长对应 GDD 目标窗口 */
-    private double speed = 1.25;
+     *  默认 0.5：1 游戏年(2π 单位) ≈ 12.6 真实秒；40 种子实测局长中位 196 年 ≈ 41 分钟，
+     *  P25-P75 = 25-67 分钟，覆盖 GDD 30-60 分钟目标窗口（拍板点1：整体放大系统尺度标定） */
+    private double speed = 0.5;
     private boolean paused;
 
     public CosmosSimSystem(GravitySimulation sim, int[] starEntities, int planetEntity,
@@ -77,12 +96,13 @@ public class CosmosSimSystem implements GameSystem {
         this.planetEntity = planetEntity;
         this.trails = trails;
         this.eventBus = eventBus;
+        this.hostTracker = new HostTracker(sim);
     }
 
     @Override
     public void update(World world, float deltaTime) {
-        // ===== 1. 固定子步长推进积分 =====
-        if (!paused) {
+        // ===== 1. 固定子步长推进积分（乐章终结后停步，场景冻结供终局演出）=====
+        if (!paused && !runEnded) {
             stepAccum += speed * deltaTime;
             int steps = (int) (stepAccum / SIM_DT);
             if (steps > MAX_STEPS_PER_FRAME) {
@@ -91,11 +111,12 @@ public class CosmosSimSystem implements GameSystem {
             } else {
                 stepAccum -= steps * SIM_DT;
             }
-            for (int s = 0; s < steps; s++) {
+            for (int s = 0; s < steps && !runEnded; s++) {
                 sim.step(SIM_DT);
                 if (++stepCounter % RECORD_EVERY == 0) {
                     recordTrailPoint();
                 }
+                checkFate();   // 逐步判定易天/终局（防高倍速下隧穿漏判坠焚）
             }
         }
 
@@ -150,11 +171,46 @@ public class CosmosSimSystem implements GameSystem {
                     currentEpoch != null ? currentEpoch.type().getDisplayName() : "(初始)",
                     epoch.type().getDisplayName(), epoch.temperature(), epoch.nearestDist()));
             if (epoch.type() == com.mog.astro.EpochType.LOST) {
-                log.warn("母星已被弹射出三体系统，沿切线直线漂流——正式游戏中此事件触发"
-                        + "『冰封远航』毁灭结算（文明冻结 -> 传承点结算 -> 新种子重开）");
+                log.warn("母星漂入深空——『失家深空』预警：天空已全黑，"
+                        + "距正式失家终局（FateJudge）仅剩漂流倒计时");
             }
         }
         currentEpoch = epoch;
+    }
+
+    /**
+     * 逐步判定：易天（宿主易主）与乐章终局。
+     * 口径与 ChaoticSpectrumTool 测量一致（HostTracker 滞回 / FateJudge 阈值），
+     * 保证玩家实际经历的分布 = 40 种子扫描测得的分布。
+     */
+    private void checkFate() {
+        int oldHost = hostTracker.getHost();
+        int newHost = hostTracker.update(sim);
+        if (newHost >= 0) {
+            eventBus.publish(new HostChangedEvent(oldHost, newHost, sim.getTime()));
+            log.info("『易天』{}: 行星被曜{}捕获（第 {} 次易主）——文明的天空换了一颗太阳",
+                    GameCalendar.yearOf(sim.getTime()), newHost + 1, hostTracker.getSwitchCount());
+        }
+
+        EndingType fate = FateJudge.judge(sim, hostTracker.scorchDistance());
+        if (fate == null) {
+            return;
+        }
+        runEnded = true;
+        ending = fate;
+        ejectedStar = fate == EndingType.STAR_EJECTED ? FateJudge.ejectedStar(sim) : -1;
+        eventBus.publish(new RunEndedEvent(fate, ejectedStar, sim.getTime(), hostTracker.getSwitchCount()));
+        switch (fate) {
+            case PLANET_SCORCHED -> log.warn("『乐章终局』{}: 行星坠入恒星焚毁——毁灭结算"
+                            + "（传承点结算 -> 星海轮回新种子重开）",
+                    GameCalendar.yearOf(sim.getTime()));
+            case PLANET_LOST -> log.warn("『乐章终局』{}: 行星被弹出三体系统，冰封远航——毁灭结算"
+                            + "（文明冻结 -> 传承点结算 -> 星海轮回新种子重开）",
+                    GameCalendar.yearOf(sim.getTime()));
+            case STAR_EJECTED -> log.warn("『乐章终局』{}: 曜{} 被弹射离场，三体系统解体——"
+                            + "终曲演出 + 逃亡判定（S3 演出层接入）",
+                    GameCalendar.yearOf(sim.getTime()), ejectedStar + 1);
+        }
     }
 
     private void recordTrailPoint() {
@@ -205,5 +261,25 @@ public class CosmosSimSystem implements GameSystem {
 
     public GravitySimulation getSim() {
         return sim;
+    }
+
+    // ===== 乐章状态（HUD / 结算流程读取）=====
+
+    public HostTracker getHostTracker() {
+        return hostTracker;
+    }
+
+    public boolean isRunEnded() {
+        return runEnded;
+    }
+
+    /** 终局类型（未终结时为 null）。 */
+    public EndingType getEnding() {
+        return ending;
+    }
+
+    /** 弹射离场的恒星索引（仅 STAR_EJECTED 终局有效，否则 -1）。 */
+    public int getEjectedStar() {
+        return ejectedStar;
     }
 }

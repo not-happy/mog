@@ -19,13 +19,13 @@ public class OrbitCameraRig implements CameraRig {
     private static final float DRAG_SENSITIVITY = 0.005f;
     private static final float MAX_PITCH = (float) Math.toRadians(85f);
     private static final float MIN_DIST = 6f;
-    private static final float MAX_DIST = 400f;
+    private static final float MAX_DIST = 600f;
 
     private final Camera camera;
     private final Vector3f target = new Vector3f(0, 0, 0);
     private float yaw = 0.4f;          // θ
     private float pitch = 0.6f;        // φ
-    private float distance = 75f;      // 系统跨度 ±22，留出观赏距离
+    private float distance = 170f;     // 游戏尺度系统跨度 ±50（a_out=40 深交外轨），fov 60° 下留观赏余量
 
     public OrbitCameraRig(Camera camera) {
         this.camera = camera;
