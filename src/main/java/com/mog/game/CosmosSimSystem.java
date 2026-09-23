@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * 星系模拟系统：以固定子步长推进三体积分（倍速 = 每帧多步），
- * 同步天体实体 Transform、维护轨道残影环形缓冲、实时纪元分类并发布事件。
+ * 同步天体实体 Transform、维护彗尾式运动拖尾环形缓冲、实时纪元分类并发布事件。
  *
  * 玩法层职责（S2）：逐步判定易天（HostTracker -> HostChangedEvent）
  * 与乐章终局（FateJudge -> RunEndedEvent，首个终局事件后冻结物理步进），
@@ -43,9 +43,9 @@ public class CosmosSimSystem implements GameSystem {
     private static final double MAX_SPEED = 120.0;
     /** 每条轨迹的环形缓冲容量 */
     public static final int TRAIL_CAP = 2400;
-    /** 每 N 个积分步记录一个轨迹点（外轨周期 ~918 单位，2400 点×200 步×0.002 = 960 单位
-     *  ≈ 覆盖一整圈外轨残影——第三星的 plunging 俯冲轨迹完整可见） */
-    private static final int RECORD_EVERY = 200;
+    /** 每 N 个积分步记录一个轨迹点（彗尾式运动拖尾：2400 点×4 步×0.002 = 19.2 时间单位
+     *  ≈ 3 游戏年 ≈ 默认倍速下 38 真实秒的运动历史，点距致密贴住天体） */
+    private static final int RECORD_EVERY = 4;
 
     /** 天体显示颜色（恒星 >1 = HDR，触发泛光；行星暗色） */
     private static final float[][] BODY_COLORS = {
@@ -71,8 +71,6 @@ public class CosmosSimSystem implements GameSystem {
     private final int[] trailCount = new int[4];
     private final int[] trailHead = new int[4];
     private final float[][] vertexScratch = new float[4][TRAIL_CAP * TrailRenderer.FLOATS_PER_VERTEX];
-    /** 三星连线（三角形 = 三体问题的标志性视觉符号），每帧更新，占用第 5 条轨迹槽 */
-    private final float[] triangleVerts = new float[4 * TrailRenderer.FLOATS_PER_VERTEX];
 
     private double stepAccum;
     private int stepCounter;
@@ -130,14 +128,15 @@ public class CosmosSimSystem implements GameSystem {
         world.getComponent(planetEntity, TransformComponent.class)
                 .getPosition().set((float) pp.x, (float) pp.y, (float) pp.z);
 
-        // ===== 3. 重建轨迹顶点（旧 -> 新，alpha 渐隐）=====
+        // ===== 3. 重建轨迹顶点（旧 -> 新，alpha 平方渐隐 = 彗尾式运动拖尾）=====
         for (int b = 0; b < 4; b++) {
             int n = trailCount[b];
             float[] verts = vertexScratch[b];
             int p = 0;
             for (int k = 0; k < n; k++) {
                 int idx = (trailHead[b] - n + k + TRAIL_CAP * 2) % TRAIL_CAP;
-                float alpha = (k + 1) / (float) n * 0.85f;
+                float t = (k + 1) / (float) n;
+                float alpha = t * t * 0.9f;   // 头部亮、尾部快速消隐（加色混合下呈彗尾发光）
                 verts[p++] = ringX[b][idx];
                 verts[p++] = ringY[b][idx];
                 verts[p++] = ringZ[b][idx];
@@ -148,20 +147,6 @@ public class CosmosSimSystem implements GameSystem {
             }
             trails.setTrail(b, verts, n);
         }
-
-        // ===== 3b. 三星连线（A->B->C->A 闭合，LINE_STRIP 4 点）=====
-        int tp = 0;
-        for (int k = 0; k < 4; k++) {
-            Vector3d sp = sim.getStarPos(k % 3);
-            triangleVerts[tp++] = (float) sp.x;
-            triangleVerts[tp++] = (float) sp.y;
-            triangleVerts[tp++] = (float) sp.z;
-            triangleVerts[tp++] = 0.72f;   // 冷白色、低透明度：几何辅助线不抢戏
-            triangleVerts[tp++] = 0.78f;
-            triangleVerts[tp++] = 0.95f;
-            triangleVerts[tp++] = 0.16f;
-        }
-        trails.setTrail(4, triangleVerts, 4);
 
         // ===== 4. 纪元分类与事件 =====
         Epoch epoch = classifier.classify(sim);

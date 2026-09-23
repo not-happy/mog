@@ -29,7 +29,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
  * 宇宙场景（C1 星系模拟核心）：观赏穿越家族混沌三重星之舞与行星的命运。
  *
  * 构成：三体积分模拟（CosmosSimSystem，游戏默认构型 ratio=4.0/A_IN=10）
- * + HDR 发光恒星（顶点色 >1 触发泛光）+ 轨道残影线（TrailRenderer）
+ * + HDR 发光恒星（顶点色 >1 触发泛光）+ 彗尾式运动轨迹拖尾（TrailRenderer）
  * + 轨道环绕相机（OrbitCameraRig）+ 易天/终局事件（HostTracker/FateJudge 驱动）。
  *
  * 操作：左键拖拽旋转 / 滚轮缩放 / 空格暂停 / +- 倍速 / Tab 返回地表。
@@ -78,7 +78,7 @@ public class CosmosScene implements Scene {
     public void init() {
         sim = new GravitySimulation(new Random().nextLong());
 
-        trails = new TrailRenderer(5, CosmosSimSystem.TRAIL_CAP);  // 3 恒星 + 行星 + 三星连线
+        trails = new TrailRenderer(4, CosmosSimSystem.TRAIL_CAP);  // 3 恒星 + 行星 运动轨迹拖尾
         trails.init();
 
         // ===== 三颗恒星（HDR 发光球体：亮度 ∝ 质光关系 L=m^3.5，半径 ∝ √m 显示夸张）=====
