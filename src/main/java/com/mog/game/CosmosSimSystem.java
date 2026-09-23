@@ -26,8 +26,11 @@ public class CosmosSimSystem implements GameSystem {
 
     /** 积分固定步长（模拟时间单位） */
     public static final double SIM_DT = 0.002;
-    /** 单帧最大子步数（防卡顿后的死亡螺旋） */
+    /** 单帧最大子步数（防卡顿后的死亡螺旋）。
+     *  也决定了倍速的有效上限：SIM_DT×800×60fps = 96 模拟单位/秒 ≈ 15 年/秒 */
     private static final int MAX_STEPS_PER_FRAME = 800;
+    /** 倍速上限（调试加速用，正常游玩到不了这么高） */
+    private static final double MAX_SPEED = 120.0;
     /** 每条轨迹的环形缓冲容量 */
     public static final int TRAIL_CAP = 2400;
     /** 每 N 个积分步记录一个轨迹点（外轨周期 ~537 单位，间隔 40 步使残影覆盖 ~1/3 外轨） */
@@ -184,7 +187,12 @@ public class CosmosSimSystem implements GameSystem {
     }
 
     public void multiplySpeed(double factor) {
-        speed = Math.max(0.5, Math.min(60.0, speed * factor));
+        setSpeed(speed * factor);
+    }
+
+    /** 设置绝对倍速（钳制到 [0.5, MAX_SPEED]）。 */
+    public void setSpeed(double newSpeed) {
+        speed = Math.max(0.5, Math.min(MAX_SPEED, newSpeed));
     }
 
     public double getSpeed() {

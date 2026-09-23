@@ -75,6 +75,8 @@ public class Game {
     private ShaderSet shaders;
     private Scene scene;
     private boolean startInCosmos;
+    /** 调试加速：--speed N 指定的宇宙场景初始倍速（0 = 用默认 1.25） */
+    private double cosmosSpeed;
     /** 文本 HUD（系统字体不可用时为 null，自动降级） */
     private FontAtlas font;
     private TextRenderer text;
@@ -99,6 +101,7 @@ public class Game {
 
     public void start(String[] args) {
         startInCosmos = args != null && Arrays.asList(args).contains("--cosmos");
+        cosmosSpeed = parseSpeedArg(args);
         log.info("===== mog-engine 启动 =====");
         try {
             init();
@@ -109,6 +112,36 @@ public class Game {
             cleanup();
             log.info("===== mog-engine 退出 =====");
         }
+    }
+
+    /** 解析调试加速参数：--speed=N 或 --speed N（返回 0 表示未指定，用场景默认倍速）。 */
+    private static double parseSpeedArg(String[] args) {
+        if (args == null) {
+            return 0;
+        }
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
+            if (a.startsWith("--speed=")) {
+                return parseSpeedValue(a.substring("--speed=".length()), a);
+            }
+            if (a.equals("--speed") && i + 1 < args.length) {
+                return parseSpeedValue(args[i + 1], a);
+            }
+        }
+        return 0;
+    }
+
+    private static double parseSpeedValue(String raw, String origin) {
+        try {
+            double v = Double.parseDouble(raw);
+            if (v > 0) {
+                return v;
+            }
+        } catch (NumberFormatException ignored) {
+            // fallthrough
+        }
+        LoggerFactory.getLogger(Game.class).warn("忽略非法的 {} 参数值: {}", origin, raw);
+        return 0;
     }
 
     private void init() {
@@ -135,7 +168,7 @@ public class Game {
                 Shader.loadFromClasspath("/shaders/skinned_pbr.vert", "/shaders/pbr.frag"),
                 Shader.loadFromClasspath("/shaders/shadow_depth.vert", "/shaders/shadow_depth.frag"));
 
-        scene = startInCosmos ? new CosmosScene(eventBus) : new DemoScene(assets, eventBus);
+        scene = startInCosmos ? new CosmosScene(eventBus, cosmosSpeed) : new DemoScene(assets, eventBus);
         scene.init();
 
         // IBL 环境光照：程序化天空 -> 辐照度/预滤波/BRDF LUT
@@ -316,7 +349,7 @@ public class Game {
         boolean toCosmos = !(scene instanceof CosmosScene);
         log.info("切换场景 -> {}", toCosmos ? "宇宙视角" : "地表视角");
         scene.cleanup();
-        scene = toCosmos ? new CosmosScene(eventBus) : new DemoScene(assets, eventBus);
+        scene = toCosmos ? new CosmosScene(eventBus, cosmosSpeed) : new DemoScene(assets, eventBus);
         scene.init();
         window.setMouseCaptured(!toCosmos); // 宇宙场景拖拽操作，不锁光标
         input.resetMouse();

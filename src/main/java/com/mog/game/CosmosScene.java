@@ -59,9 +59,16 @@ public class CosmosScene implements Scene {
     private TrailRenderer trails;
     private OrbitCameraRig cameraRig;
     private final List<Mesh> ownedMeshes = new ArrayList<>();
+    /** 调试加速：初始倍速（<=0 表示用系统默认 1.25），来自启动参数 --speed N */
+    private final double initialSpeed;
 
     public CosmosScene(EventBus eventBus) {
+        this(eventBus, 0);
+    }
+
+    public CosmosScene(EventBus eventBus, double initialSpeed) {
         this.eventBus = eventBus;
+        this.initialSpeed = initialSpeed;
     }
 
     @Override
@@ -99,6 +106,10 @@ public class CosmosScene implements Scene {
         world.addComponent(planet, new MeshComponent(planetMesh));
 
         simSystem = new CosmosSimSystem(sim, starEntities, planet, trails, eventBus);
+        if (initialSpeed > 0) {
+            simSystem.setSpeed(initialSpeed);
+            log.info("调试加速: 初始倍速 x{} (--speed)", simSystem.getSpeed());
+        }
         world.addSystem(simSystem);
 
         cameraRig = new OrbitCameraRig(camera);
