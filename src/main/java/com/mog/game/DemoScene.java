@@ -80,6 +80,7 @@ public class DemoScene implements Scene {
     private final World world = new World();
     private final Camera camera = new Camera();
     private final ParticleEngine particles = new ParticleEngine();
+    private CameraController cameraRig;
     /** 黄昏主光：冷色、低强度（环境光在着色器里与其解耦） */
     private final Light light = new Light(
             new Vector3f(-0.4f, -1.0f, -0.5f),
@@ -104,6 +105,7 @@ public class DemoScene implements Scene {
         camera.setPosition(0, 1.6f, 6f);
         // 初始视角略微向下（0.12 弧度 ≈ 7°），开局就能看到地面和模型
         camera.getRotation().x = 0.12f;
+        cameraRig = new CameraController(camera);
 
         // 注册系统（每帧按注册顺序执行；TransformSystem 在改 Transform 的系统之后，
         // CollisionSystem 在 TransformSystem 之后读最新位置）
@@ -377,8 +379,22 @@ public class DemoScene implements Scene {
     }
 
     /** 粒子引擎：Game 在场景遍内调用其 render()（模拟已由 World 调度）。 */
+    @Override
     public ParticleEngine getParticleEngine() {
         return particles;
+    }
+
+    @Override
+    public CameraRig getCameraRig() {
+        return cameraRig;
+    }
+
+    @Override
+    public java.util.List<String> getHudLines() {
+        var cam = camera.getPosition();
+        return java.util.List.of(
+                String.format("实体: %d   资产缓存: %d", world.getEntityCount(), assets.getCacheSize()),
+                String.format("相机坐标: (%.1f, %.1f, %.1f)", cam.x, cam.y, cam.z));
     }
 
     @Override

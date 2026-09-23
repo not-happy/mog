@@ -26,7 +26,7 @@ import static org.lwjgl.glfw.GLFW.*;
  *   pitch 正值 = 低头，负值 = 抬头（限制 ±89° 防万向节翻转）
  *   水平前方向量 = (sin yaw, 0, -cos yaw)，水平右方向量 = (cos yaw, 0, sin yaw)
  */
-public class CameraController {
+public class CameraController implements CameraRig {
 
     private static final Logger log = LoggerFactory.getLogger(CameraController.class);
 
@@ -78,6 +78,7 @@ public class CameraController {
      * @param deltaTime 帧耗时（秒）
      * @param mouseLook 是否启用鼠标视角（仅在鼠标被捕获时为 true）
      */
+    @Override
     public void update(InputHandler input, float deltaTime, boolean mouseLook) {
         updateLook(input, mouseLook);
         updateKeyboardLook(input, deltaTime);

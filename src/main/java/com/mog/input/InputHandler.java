@@ -88,6 +88,11 @@ public class InputHandler {
         deltaY = 0;
     }
 
+    /** 消费本帧滚轮累积量（上滚为正）。 */
+    public double consumeScrollY() {
+        return window.consumeScrollY();
+    }
+
     /** 按键是否处于按下状态（会记录，供下一帧边沿检测）。窗口失焦时恒为 false。 */
     public boolean isKeyPressed(int key) {
         boolean pressed = window.isFocused()

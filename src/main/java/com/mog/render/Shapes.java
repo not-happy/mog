@@ -69,6 +69,52 @@ public final class Shapes {
     }
 
     /**
+     * 创建纯色 UV 球体（直径 1，中心原点，含法线；缩放由 Transform 完成）。
+     * 颜色分量允许 >1（HDR 顶点色，配合泛光做发光恒星）。
+     */
+    public static Mesh createColoredSphere(int slices, int stacks, float r, float g, float b) {
+        int vertCount = (stacks + 1) * (slices + 1);
+        float[] positions = new float[vertCount * 3];
+        float[] normals = new float[vertCount * 3];
+        float[] colors = new float[vertCount * 3];
+        int v = 0;
+        for (int i = 0; i <= stacks; i++) {
+            double phi = Math.PI * i / stacks;          // 极角：0(北极) -> π(南极)
+            for (int j = 0; j <= slices; j++) {
+                double theta = 2 * Math.PI * j / slices; // 方位角
+                float x = (float) (Math.sin(phi) * Math.cos(theta));
+                float y = (float) Math.cos(phi);
+                float z = (float) (Math.sin(phi) * Math.sin(theta));
+                positions[v] = x * 0.5f;
+                positions[v + 1] = y * 0.5f;
+                positions[v + 2] = z * 0.5f;
+                normals[v] = x;
+                normals[v + 1] = y;
+                normals[v + 2] = z;
+                colors[v] = r;
+                colors[v + 1] = g;
+                colors[v + 2] = b;
+                v += 3;
+            }
+        }
+        int[] indices = new int[stacks * slices * 6];
+        int k = 0;
+        for (int i = 0; i < stacks; i++) {
+            for (int j = 0; j < slices; j++) {
+                int a = i * (slices + 1) + j;
+                int below = a + slices + 1;
+                indices[k++] = a;
+                indices[k++] = below;
+                indices[k++] = a + 1;
+                indices[k++] = a + 1;
+                indices[k++] = below;
+                indices[k++] = below + 1;
+            }
+        }
+        return new Mesh(positions, colors, null, normals, indices);
+    }
+
+    /**
      * 创建 XZ 平面（地面），中心在原点，法线朝上 (+Y)。
      *
      * @param size     边长

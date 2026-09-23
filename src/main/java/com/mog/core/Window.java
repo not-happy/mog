@@ -1,6 +1,7 @@
 package com.mog.core;
 
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.glfw.GLFWScrollCallback;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.opengl.GL;
 import org.slf4j.Logger;
@@ -31,6 +32,9 @@ public class Window {
     private final boolean vSync;
     private boolean resized;
     private boolean mouseCaptured;
+    /** 滚轮只能走回调（GLFW 无轮询接口）：累积到字段，消费时清零。持强引用防 GC。 */
+    private GLFWScrollCallback scrollCallback;
+    private double scrollAccum;
 
     public Window(String title, int width, int height, boolean vSync) {
         this.title = title;
@@ -70,6 +74,10 @@ public class Window {
             fbHeight = h;
             resized = true;
         });
+
+        // 滚轮回调：持有引用防 GC（LWJGL 回调经典坑）
+        scrollCallback = GLFWScrollCallback.create((window, xoff, yoff) -> scrollAccum += yoff);
+        glfwSetScrollCallback(handle, scrollCallback);
 
         // 窗口居中
         try (var stack = stackPush()) {
@@ -142,6 +150,13 @@ public class Window {
         return mouseCaptured;
     }
 
+    /** 消费滚轮累积量（上滚为正）。 */
+    public double consumeScrollY() {
+        double s = scrollAccum;
+        scrollAccum = 0;
+        return s;
+    }
+
     /** 窗口当前是否拥有键盘焦点（失焦时应暂停输入处理）。 */
     public boolean isFocused() {
         return glfwGetWindowAttrib(handle, GLFW_FOCUSED) == GLFW_TRUE;
@@ -160,6 +175,10 @@ public class Window {
     }
 
     public void cleanup() {
+        if (scrollCallback != null) {
+            scrollCallback.free();
+            scrollCallback = null;
+        }
         if (handle != NULL) {
             glfwDestroyWindow(handle);
             handle = NULL;
