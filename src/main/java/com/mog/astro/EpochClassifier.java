@@ -47,14 +47,14 @@ public class EpochClassifier {
         Vector3d p = sim.getPlanetPos();
         int n = sim.getStarCount();
 
-        // 距离与温度
+        // 距离与温度（质光关系 L=m^3.5：重星更亮更危险）
         double temp = 0;
         int nearest = 0;
         double nearestDist = Double.MAX_VALUE;
         for (int i = 0; i < n; i++) {
             dist[i] = p.distance(sim.getStarPos(i));
             double d2 = Math.max(dist[i] * dist[i], 0.01);
-            temp += 1.0 / d2; // L=1
+            temp += sim.getLuminosity(i) / d2;
             if (dist[i] < nearestDist) {
                 nearestDist = dist[i];
                 nearest = i;

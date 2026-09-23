@@ -33,8 +33,15 @@ public class GravitySimulation {
     /** 1 游戏年对应的模拟时间单位 */
     public static final double TIME_UNITS_PER_YEAR =
             2 * Math.PI * Math.sqrt(PLANET_BIRTH_RADIUS * PLANET_BIRTH_RADIUS * PLANET_BIRTH_RADIUS / G);
+    /**
+     * Plummer 软化长度：全部两体引力用 r²+ε² 防近距相遇时力爆炸
+     * （固定步长积分器在近距会失准甚至产生非物理弹射/NaN）。
+     * ε=0.05 时 r≥1 的轨道力学误差 <0.3%，游戏尺度下可忽略。
+     */
+    public static final double SOFTENING = 0.05;
 
     private final int starCount = 3;
+    /** 恒星质量（种子随机 0.9~1.1；质光关系 L=m^3.5 驱动显示亮度与纪元温度模型） */
     private final double[] mass = {1, 1, 1};
     private final Vector3d[] pos = new Vector3d[3];
     private final Vector3d[] vel = new Vector3d[3];
@@ -76,47 +83,53 @@ public class GravitySimulation {
     public void reset(long seed) {
         Random rnd = new Random(seed);
 
+        // ===== 恒星质量（种子随机）=====
+        for (int i = 0; i < 3; i++) {
+            mass[i] = 0.9 + rnd.nextDouble() * 0.2;   // 0.9~1.1（L=m^3.5 ∈ [0.69,1.46]）
+        }
+        double mBin = mass[0] + mass[1];
+        double mTot = mBin + mass[2];
+
         // ===== 轨道根数（互倾层级三重星，Kozai 驱动的长寿混沌）=====
         // 稳定性设计（文献判据 + MonteCarloTool 实测）：
-        //   - 行星 r=1 < Holman-Wiegert 临界 0.27×a_in=1.08（对双星伴星长期稳定）
+        //   - 行星轨道 < Holman-Wiegert 临界 0.27×a_in（对双星伴星长期稳定）
         //   - a_out/a_in ≈ 7 略高于 Mardling 临界 ≈6.9（初期稳定，不早解体）
-        //   - 65° 互倾激发 Kozai：e_out 被泵至 ~0.84 时临界比升至 7.2
-        //     -> 首次 e 峰值（t≈2400 单位 ≈ 380 年）附近进入不稳定 -> 延迟剧变
-        //
-        // 参数按种子随机化（Roguelike 宇宙多样性）：
-        //   - 倾角 < 39.2°（Kozai 临界角）的宇宙：无偏心率泵浦 -> 长寿"黄金纪元"
-        //   - 倾角在 Kozai 区的宇宙：e 峰值附近剧变 -> 坠焚/弹射/恒星逃逸
-        //   - a_out 越大越稳；eps 决定残余混沌的底噪
-        //   历法锚点不变：行星出生轨道 r=1 恒定 => 1 年 = 2π 与种子无关。
-        final double aIn = 4.0;                               // 双星半长轴（固定，保护历法与行星稳定性）
+        //   - 倾角跨 Kozai 临界角 39.2°：高倾角宇宙 e_out 被泵高 -> 延迟剧变；
+        //     低倾角宇宙平静长寿 -> "黄金纪元"jackpot 池
+        //   历法锚点：行星轨道半径 r=∛(G·m_A) => 周期恒等于 2π，与质量/种子无关
+        final double aIn = 4.0;                               // 双星半长轴（固定）
         final double aOut = 28.0 + rnd.nextDouble() * 14.0;   // 28~42
         final double eOut = 0.05 + rnd.nextDouble() * 0.25;   // 0.05~0.30
-        final double inc = Math.toRadians(30.0 + rnd.nextDouble() * 50.0); // 30°~80°：~18% 低于 Kozai 临界角
+        final double inc = Math.toRadians(30.0 + rnd.nextDouble() * 50.0); // 30°~80°
         final double qOut = aOut * (1 - eOut);                // 外轨近日点距离
 
-        // 初始相位：C 在近日点（沿 +X，绕 X 轴的倾角旋转不改变 X 轴上的点），
-        // 双星质心在 -X 侧；质心分配 d = q×(对方质量/总质量)
-        double dC = qOut * 2.0 / 3.0;              // C 到系统质心
-        double dBin = qOut / 3.0;                  // 双星质心到系统质心
+        // ===== 质心布局（按质量比分配，系统质心 = 原点，总动量 = 0）=====
+        // C 在近日点（沿 +X，绕 X 轴的倾角旋转不改变 X 轴上的点）
+        double dC = qOut * mBin / mTot;          // C 到系统质心
+        double dBin = qOut * mass[2] / mTot;     // 双星质心到系统质心（-X 侧）
+        double dA = aIn * mass[1] / mBin;        // A 到双星质心（反质量比）
+        double dB = aIn * mass[0] / mBin;        // B 到双星质心
 
-        // 近日点相对速度 v_peri = √(GM(1+e)/q)，按动量分配到 C(×2/3) 与双星质心(×1/3)
-        double vPeriRel = Math.sqrt(3.0 * (1 + eOut) / qOut);
-        double vC = vPeriRel * 2.0 / 3.0;
-        // C 速度：轨道面内 ⊥ 位矢（+Z 方向），再绕 X 轴倾斜 inc -> (0, -vC·sin i, vC·cos i)
+        // 速度：外轨近日点相对速度 √(GM(1+e)/q)，按动量分配到 C 与双星质心
+        double vPeriRel = Math.sqrt(G * mTot * (1 + eOut) / qOut);
+        double vC = vPeriRel * mBin / mTot;
+        double vBaryCom = vPeriRel * mass[2] / mTot;
+        // C 速度方向：轨道面内 ⊥ 位矢（+Z），绕 X 轴倾斜 inc -> (0, -sin i, cos i)×vC
         double vCy = -vC * Math.sin(inc);
         double vCz = vC * Math.cos(inc);
-        // 双星质心速度 = -v_C × (m_C/m_bin)（总动量为零）
-        double vBaryY = -vCy / 2.0;
-        double vBaryZ = -vCz / 2.0;
+        // 双星质心速度：与 C 反向
+        double vBaryY = vBaryCom * Math.sin(inc);
+        double vBaryZ = -vBaryCom * Math.cos(inc);
+        // 双星内部相对圆轨速度 √(G·mBin/a_in)，按反质量比分配，沿 ±Z（双星面 = XZ）
+        double vBinRel = Math.sqrt(G * mBin / aIn);
+        double vAInt = vBinRel * mass[1] / mBin;
+        double vBInt = vBinRel * mass[0] / mBin;
 
-        // 双星内部相对圆轨速度 √(G(mA+mB)/a_in)，各分一半，沿 ±Z（双星轨道面 = XZ）
-        double vBinInt = Math.sqrt(2.0 / aIn) / 2;
+        setStar(0, -dBin - dA, 0, 0, 0, vBaryY, vBaryZ - vAInt);  // A
+        setStar(1, -dBin + dB, 0, 0, 0, vBaryY, vBaryZ + vBInt);  // B
+        setStar(2, dC, 0, 0, 0, vCy, vCz);                        // C（倾角在速度分量中）
 
-        setStar(0, -dBin - aIn / 2, 0, 0, 0, vBaryY, vBaryZ - vBinInt);  // A
-        setStar(1, -dBin + aIn / 2, 0, 0, 0, vBaryY, vBaryZ + vBinInt);  // B
-        setStar(2, dC, 0, 0, 0, vCy, vCz);                               // C（倾角在速度分量中）
-
-        // 微扰：混沌的种子（三维位置与速度同时施加，幅度也随种子浮动）
+        // 微扰：混沌的种子（三维位置与速度同时施加，幅度随种子浮动）
         double eps = 0.005 + rnd.nextDouble() * 0.01;   // 0.005~0.015
         for (int i = 0; i < 3; i++) {
             pos[i].mul(1 + (rnd.nextDouble() - 0.5) * eps,
@@ -127,10 +140,10 @@ public class GravitySimulation {
                     1 + (rnd.nextDouble() - 0.5) * eps);
         }
 
-        // 行星：恒星 A 的 r=1 圆轨道（年 = 2π，历法锚点不随构型调整而变）
-        double r = PLANET_BIRTH_RADIUS;
-        planetPos.set(pos[0].x + r, 0, pos[0].z);
-        double vCirc = Math.sqrt(G * mass[0] / r);   // = 1.0
+        // 行星：A 的圆轨道，半径 r=∛(G·m_A) 保证周期恒为 2π（历法锚点）
+        double r = Math.cbrt(G * mass[0]);
+        planetPos.set(pos[0].x + r, pos[0].y, pos[0].z);
+        double vCirc = Math.sqrt(G * mass[0] / r);
         planetVel.set(vel[0].x, vel[0].y, vel[0].z + vCirc);
 
         time = 0;
@@ -170,12 +183,13 @@ public class GravitySimulation {
         }
         planetAcc.set(0, 0, 0);
         Vector3d d = new Vector3d();
-        // 星-星
+        double soft2 = SOFTENING * SOFTENING;
+        // 星-星（Plummer 软化：近距相遇时力有界，固定步长积分不失准）
         for (int i = 0; i < starCount; i++) {
             for (int j = i + 1; j < starCount; j++) {
                 d.set(pos[j]).sub(pos[i]);
-                double r2 = d.lengthSquared();
-                double inv = 1.0 / (r2 * Math.sqrt(r2)); // 1/r³
+                double r2 = d.lengthSquared() + soft2;
+                double inv = 1.0 / (r2 * Math.sqrt(r2)); // 1/(r²+ε²)^{3/2}
                 accBuf[i].fma(G * mass[j] * inv, d);
                 accBuf[j].fma(-G * mass[i] * inv, d);
             }
@@ -183,7 +197,7 @@ public class GravitySimulation {
         // 星-行星（测试粒子只受力）
         for (int i = 0; i < starCount; i++) {
             d.set(pos[i]).sub(planetPos);
-            double r2 = Math.max(d.lengthSquared(), 0.01); // 软化防奇点
+            double r2 = d.lengthSquared() + soft2;
             double inv = 1.0 / (r2 * Math.sqrt(r2));
             planetAcc.fma(G * mass[i] * inv, d);
         }
@@ -194,6 +208,15 @@ public class GravitySimulation {
 
     public Vector3d getStarPos(int i) {
         return pos[i];
+    }
+
+    public double getMass(int i) {
+        return mass[i];
+    }
+
+    /** 质光关系：主序星光度 L ∝ m^3.5（纪元温度模型与显示亮度用）。 */
+    public double getLuminosity(int i) {
+        return Math.pow(mass[i], 3.5);
     }
 
     public Vector3d getStarVel(int i) {

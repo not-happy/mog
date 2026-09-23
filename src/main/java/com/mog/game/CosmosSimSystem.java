@@ -55,6 +55,8 @@ public class CosmosSimSystem implements GameSystem {
     private final int[] trailCount = new int[4];
     private final int[] trailHead = new int[4];
     private final float[][] vertexScratch = new float[4][TRAIL_CAP * TrailRenderer.FLOATS_PER_VERTEX];
+    /** 三星连线（三角形 = 三体问题的标志性视觉符号），每帧更新，占用第 5 条轨迹槽 */
+    private final float[] triangleVerts = new float[4 * TrailRenderer.FLOATS_PER_VERTEX];
 
     private double stepAccum;
     private int stepCounter;
@@ -122,6 +124,20 @@ public class CosmosSimSystem implements GameSystem {
             }
             trails.setTrail(b, verts, n);
         }
+
+        // ===== 3b. 三星连线（A->B->C->A 闭合，LINE_STRIP 4 点）=====
+        int tp = 0;
+        for (int k = 0; k < 4; k++) {
+            Vector3d sp = sim.getStarPos(k % 3);
+            triangleVerts[tp++] = (float) sp.x;
+            triangleVerts[tp++] = (float) sp.y;
+            triangleVerts[tp++] = (float) sp.z;
+            triangleVerts[tp++] = 0.72f;   // 冷白色、低透明度：几何辅助线不抢戏
+            triangleVerts[tp++] = 0.78f;
+            triangleVerts[tp++] = 0.95f;
+            triangleVerts[tp++] = 0.16f;
+        }
+        trails.setTrail(4, triangleVerts, 4);
 
         // ===== 4. 纪元分类与事件 =====
         Epoch epoch = classifier.classify(sim);

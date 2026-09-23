@@ -68,18 +68,21 @@ public class CosmosScene implements Scene {
     public void init() {
         sim = new GravitySimulation(new Random().nextLong());
 
-        trails = new TrailRenderer(4, CosmosSimSystem.TRAIL_CAP);
+        trails = new TrailRenderer(5, CosmosSimSystem.TRAIL_CAP);  // 3 恒星 + 行星 + 三星连线
         trails.init();
 
-        // ===== 三颗恒星（HDR 发光球体）=====
+        // ===== 三颗恒星（HDR 发光球体：亮度 ∝ 质光关系 L=m^3.5，半径 ∝ √m 显示夸张）=====
         int[] starEntities = new int[3];
         for (int i = 0; i < 3; i++) {
             float[] c = STAR_COLORS[i];
-            Mesh sphere = Shapes.createColoredSphere(32, 20, c[0], c[1], c[2]);
+            double lum = sim.getLuminosity(i);
+            Mesh sphere = Shapes.createColoredSphere(32, 20,
+                    (float) (c[0] * lum), (float) (c[1] * lum), (float) (c[2] * lum));
             ownedMeshes.add(sphere);
             int e = world.createEntity("star-" + i);
             TransformComponent t = new TransformComponent();
-            t.getScale().set(STAR_SCALE, STAR_SCALE, STAR_SCALE);
+            float sc = STAR_SCALE * (float) Math.sqrt(sim.getMass(i));
+            t.getScale().set(sc, sc, sc);
             world.addComponent(e, t);
             world.addComponent(e, new MeshComponent(sphere));
             starEntities[i] = e;
