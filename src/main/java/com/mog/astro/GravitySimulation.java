@@ -76,42 +76,70 @@ public class GravitySimulation {
     public void reset(long seed) {
         Random rnd = new Random(seed);
 
-        // 双星内部：相对速度 √(G(mA+mB)/a_b) = √(2/4)，各分一半
-        double vBin = Math.sqrt(2.0 / 4.0) / 2;        // 0.3536
-        // 外轨（偏心）：a=12, e=0.5，近日点 q=a(1-e)=6，
-        // 近日点相对速度 v_peri = √(GM(1+e)/q) = √(3×1.5/6)
-        double vPeriRel = Math.sqrt(3.0 * 1.5 / 6.0);  // 0.8660
-        double vC = vPeriRel * 2.0 / 3.0;              // 0.5774（C，+Z）
-        double vBary = -vPeriRel / 3.0;                // -0.2887（双星质心，-Z，动量守恒）
+        // ===== 轨道根数（互倾层级三重星，Kozai 驱动的长寿混沌）=====
+        // 稳定性设计（文献判据 + MonteCarloTool 实测）：
+        //   - 行星 r=1 < Holman-Wiegert 临界 0.27×a_in=1.08（对双星伴星长期稳定）
+        //   - a_out/a_in ≈ 7 略高于 Mardling 临界 ≈6.9（初期稳定，不早解体）
+        //   - 65° 互倾激发 Kozai：e_out 被泵至 ~0.84 时临界比升至 7.2
+        //     -> 首次 e 峰值（t≈2400 单位 ≈ 380 年）附近进入不稳定 -> 延迟剧变
+        //
+        // 参数按种子随机化（Roguelike 宇宙多样性）：
+        //   - 倾角 < 39.2°（Kozai 临界角）的宇宙：无偏心率泵浦 -> 长寿"黄金纪元"
+        //   - 倾角在 Kozai 区的宇宙：e 峰值附近剧变 -> 坠焚/弹射/恒星逃逸
+        //   - a_out 越大越稳；eps 决定残余混沌的底噪
+        //   历法锚点不变：行星出生轨道 r=1 恒定 => 1 年 = 2π 与种子无关。
+        final double aIn = 4.0;                               // 双星半长轴（固定，保护历法与行星稳定性）
+        final double aOut = 28.0 + rnd.nextDouble() * 14.0;   // 28~42
+        final double eOut = 0.05 + rnd.nextDouble() * 0.25;   // 0.05~0.30
+        final double inc = Math.toRadians(30.0 + rnd.nextDouble() * 50.0); // 30°~80°：~18% 低于 Kozai 临界角
+        final double qOut = aOut * (1 - eOut);                // 外轨近日点距离
 
-        // 位置：双星质心 (-2,0,0)（A -2 / B +2 分列），C 在 (+4,0,0)（近日点）
-        setStarRaw(0, -4, 0, 0, vBary - vBin);        // A
-        setStarRaw(1, 0, 0, 0, vBary + vBin);          // B
-        setStarRaw(2, 4, 0, 0, vC);                    // C
+        // 初始相位：C 在近日点（沿 +X，绕 X 轴的倾角旋转不改变 X 轴上的点），
+        // 双星质心在 -X 侧；质心分配 d = q×(对方质量/总质量)
+        double dC = qOut * 2.0 / 3.0;              // C 到系统质心
+        double dBin = qOut / 3.0;                  // 双星质心到系统质心
 
-        // 微扰：混沌的种子（对位置与速度同时施加）
-        double eps = 0.02;
+        // 近日点相对速度 v_peri = √(GM(1+e)/q)，按动量分配到 C(×2/3) 与双星质心(×1/3)
+        double vPeriRel = Math.sqrt(3.0 * (1 + eOut) / qOut);
+        double vC = vPeriRel * 2.0 / 3.0;
+        // C 速度：轨道面内 ⊥ 位矢（+Z 方向），再绕 X 轴倾斜 inc -> (0, -vC·sin i, vC·cos i)
+        double vCy = -vC * Math.sin(inc);
+        double vCz = vC * Math.cos(inc);
+        // 双星质心速度 = -v_C × (m_C/m_bin)（总动量为零）
+        double vBaryY = -vCy / 2.0;
+        double vBaryZ = -vCz / 2.0;
+
+        // 双星内部相对圆轨速度 √(G(mA+mB)/a_in)，各分一半，沿 ±Z（双星轨道面 = XZ）
+        double vBinInt = Math.sqrt(2.0 / aIn) / 2;
+
+        setStar(0, -dBin - aIn / 2, 0, 0, 0, vBaryY, vBaryZ - vBinInt);  // A
+        setStar(1, -dBin + aIn / 2, 0, 0, 0, vBaryY, vBaryZ + vBinInt);  // B
+        setStar(2, dC, 0, 0, 0, vCy, vCz);                               // C（倾角在速度分量中）
+
+        // 微扰：混沌的种子（三维位置与速度同时施加，幅度也随种子浮动）
+        double eps = 0.005 + rnd.nextDouble() * 0.01;   // 0.005~0.015
         for (int i = 0; i < 3; i++) {
             pos[i].mul(1 + (rnd.nextDouble() - 0.5) * eps,
-                    1,
+                    1 + (rnd.nextDouble() - 0.5) * eps,
                     1 + (rnd.nextDouble() - 0.5) * eps);
             vel[i].mul(1 + (rnd.nextDouble() - 0.5) * eps,
-                    1,
+                    1 + (rnd.nextDouble() - 0.5) * eps,
                     1 + (rnd.nextDouble() - 0.5) * eps);
         }
 
-        // 行星：恒星 A 的 r=1 圆轨道（年 = 2π 时间单位）
+        // 行星：恒星 A 的 r=1 圆轨道（年 = 2π，历法锚点不随构型调整而变）
         double r = PLANET_BIRTH_RADIUS;
         planetPos.set(pos[0].x + r, 0, pos[0].z);
         double vCirc = Math.sqrt(G * mass[0] / r);   // = 1.0
-        planetVel.set(vel[0].x, 0, vel[0].z + vCirc);
+        planetVel.set(vel[0].x, vel[0].y, vel[0].z + vCirc);
 
         time = 0;
     }
 
-    private void setStarRaw(int i, double x, double y, double z, double vz) {
+    private void setStar(int i, double x, double y, double z,
+                         double vx, double vy, double vz) {
         pos[i].set(x, y, z);
-        vel[i].set(0, 0, vz);
+        vel[i].set(vx, vy, vz);
     }
 
     /** KDK Leapfrog 单步。 */

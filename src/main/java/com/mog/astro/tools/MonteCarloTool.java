@@ -6,7 +6,9 @@ import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 平衡性工具：蒙特卡洛批量模拟，统计文明轨道寿命分布。
@@ -29,7 +31,10 @@ public final class MonteCarloTool {
     private static final int CHECK_EVERY = 10;
     private static final double T_MAX = 30000;      // 模拟时间上限（≈4775 年）
     private static final double DEATH_SCORCH_DIST = 0.6;
-    private static final double DEATH_LOST_DIST = 35.0;
+    private static final double DEATH_LOST_DIST = 60.0;   // 与 EpochClassifier.LOST_DIST 同步（> 最大轨道尺度 48）
+    /** 恒星逃逸判定：任一恒星离系统质心（原点，总动量为零）超过此距离 = 系统解体。
+     *  恒星逃逸后剩余双星+行星将永远规律运行（混沌引擎熄火），按终局处理。 */
+    private static final double STAR_ESCAPE_DIST = 60.0;
 
     private MonteCarloTool() {
     }
@@ -53,6 +58,11 @@ public final class MonteCarloTool {
                 double dmin = Double.MAX_VALUE;
                 for (int i = 0; i < 3; i++) {
                     dmin = Math.min(dmin, p.distance(sim.getStarPos(i)));
+                    if (sim.getStarPos(i).length() > STAR_ESCAPE_DIST) {
+                        cause = "恒星逃逸(系统解体)";
+                        tDeath = sim.getTime();
+                        break outer;
+                    }
                 }
                 if (dmin > DEATH_LOST_DIST) {
                     cause = "弹射失家";
@@ -75,24 +85,18 @@ public final class MonteCarloTool {
         Collections.sort(deathYears);
         System.out.printf("样本 %d 局（%d 局在 %s 内未死）%n",
                 n, censored, GameCalendar.formatYears(T_MAX));
-        System.out.println("文明轨道寿命分布（行星年）:");
+        System.out.println("系统剧变寿命分布（行星年）:");
         System.out.printf("  最短   %8.1f 年  (%s)%n", deathYears.get(0), causes.get(0));
         System.out.printf("  P25    %8.1f 年%n", pct(deathYears, 25));
         System.out.printf("  中位数 %8.1f 年%n", pct(deathYears, 50));
         System.out.printf("  P75    %8.1f 年%n", pct(deathYears, 75));
         System.out.printf("  P90    %8.1f 年%n", pct(deathYears, 90));
         System.out.printf("  最长   %8.1f 年%n", deathYears.get(deathYears.size() - 1));
-        int scorch = 0;
-        int lost = 0;
+        Map<String, Integer> causeCount = new LinkedHashMap<>();
         for (String c : causes) {
-            if (c.equals("坠入/掠焚")) {
-                scorch++;
-            }
-            if (c.equals("弹射失家")) {
-                lost++;
-            }
+            causeCount.merge(c, 1, Integer::sum);
         }
-        System.out.printf("死因: 弹射失家 %d, 坠入/掠焚 %d, 存活 %d%n", lost, scorch, censored);
+        System.out.println("结局分布: " + causeCount);
         System.out.printf("参考: 中位寿命折真实时间 ≈ %.0f 分钟（默认倍速 1.25，1 年≈5 秒）%n",
                 pct(deathYears, 50) * 5 / 60);
     }

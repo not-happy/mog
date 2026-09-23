@@ -33,10 +33,10 @@ public class EpochClassifier {
      */
     private static final double SYZYGY_DIST = 6.0;
     /**
-     * 失家判定：行星与全部恒星的距离超过此值即视为被弹射出系统
-     * （系统尺度 ~20，35 = 明确逃逸；弹射后直线漂流不再返回）
+     * 失家判定：行星与全部恒星的距离超过此值即视为被弹射出系统。
+     * 注意需大于最大轨道尺度（a_out 上限 48 时行星随远星可达 ~45），防误判。
      */
-    private static final double LOST_DIST = 35.0;
+    private static final double LOST_DIST = 60.0;
 
     private final Vector3d tmpA = new Vector3d();
     private final Vector3d tmpB = new Vector3d();

@@ -30,8 +30,8 @@ public class CosmosSimSystem implements GameSystem {
     private static final int MAX_STEPS_PER_FRAME = 800;
     /** 每条轨迹的环形缓冲容量 */
     public static final int TRAIL_CAP = 2400;
-    /** 每 N 个积分步记录一个轨迹点（层级构型运动较慢，间隔放大让残影覆盖更长弧段） */
-    private static final int RECORD_EVERY = 16;
+    /** 每 N 个积分步记录一个轨迹点（外轨周期 ~537 单位，间隔 40 步使残影覆盖 ~1/3 外轨） */
+    private static final int RECORD_EVERY = 40;
 
     /** 天体显示颜色（恒星 >1 = HDR，触发泛光；行星暗色） */
     private static final float[][] BODY_COLORS = {
