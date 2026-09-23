@@ -34,16 +34,18 @@ public final class Animator {
         float tick = timeSec * tps;
 
         int n = skel.getNodeCount();
-        Vector3f pos = new Vector3f();       // 采样临时件（每帧少量分配可接受，热路径可提升为字段）
+        Vector3f pos = new Vector3f();
         Quaternionf rot = new Quaternionf();
         Vector3f scl = new Vector3f();
 
         for (int i = 0; i < n; i++) {
             AnimationData.Channel ch = anim.getChannelForNode(i);
             if (ch != null) {
-                sampleVec3Track(ch.getPosTimes(), ch.getPosValues(), tick, pos, new Vector3f());
-                sampleQuatTrack(ch.getRotTimes(), ch.getRotValues(), tick, rot);
-                sampleVec3Track(ch.getScaleTimes(), ch.getScaleValues(), tick, scl, new Vector3f(1, 1, 1));
+                // 缺轨回退到节点初始姿势的对应分量——绝不能回退到零，
+                // 否则关节塌到原点，蒙皮顶点被拉成"通天面条"
+                sampleVec3Track(ch.getPosTimes(), ch.getPosValues(), tick, pos, skel.getInitPos(i));
+                sampleQuatTrack(ch.getRotTimes(), ch.getRotValues(), tick, rot, skel.getInitRot(i));
+                sampleVec3Track(ch.getScaleTimes(), ch.getScaleValues(), tick, scl, skel.getInitScale(i));
                 localScratch.identity().translate(pos).rotate(rot).scale(scl);
             } else {
                 localScratch.set(skel.getNodeLocalTransform(i));
@@ -61,7 +63,7 @@ public final class Animator {
         }
     }
 
-    /** 向量轨采样：区间线性插值；空轨返回 fallback。 */
+    /** 向量轨采样：区间线性插值；空轨回退 fallback。 */
     private static void sampleVec3Track(float[] times, Vector3f[] values, float tick,
                                         Vector3f out, Vector3f fallback) {
         if (times == null || times.length == 0) {
@@ -86,11 +88,11 @@ public final class Animator {
         out.set(values[values.length - 1]);
     }
 
-    /** 四元数轨采样：区间球面插值。 */
+    /** 四元数轨采样：区间球面插值；空轨回退 fallback。 */
     private static void sampleQuatTrack(float[] times, Quaternionf[] values, float tick,
-                                        Quaternionf out) {
+                                        Quaternionf out, Quaternionf fallback) {
         if (times == null || times.length == 0) {
-            out.identity();
+            out.set(fallback);
             return;
         }
         if (tick <= times[0]) {
