@@ -193,13 +193,21 @@ public final class ModelLoader {
         }
     }
 
-    /** aiMatrix4x4（行主序 a1..d4）-> JOML Matrix4f（构造参数按行排列）。 */
+    /**
+     * aiMatrix4x4 -> JOML Matrix4f。
+     *
+     * 坐标约定陷阱（实测验证）：
+     *   - Assimp 是行主序：a1,a2,a3,a4 = 数学矩阵第 0 行（平移在第 4 列 a4,b4,c4）
+     *   - JOML 16 参构造器是列主序：第 n 组参数 = 数学矩阵第 n 列
+     * 因此必须按列传递：第 0 列 = (a1,b1,c1,d1)。传成行序 = 矩阵转置，
+     * 平移分量会污染顶点 w 分量，蒙皮模型被拉成"通天面条"。
+     */
     private static Matrix4f toJoml(AIMatrix4x4 m) {
         return new Matrix4f(
-                m.a1(), m.a2(), m.a3(), m.a4(),
-                m.b1(), m.b2(), m.b3(), m.b4(),
-                m.c1(), m.c2(), m.c3(), m.c4(),
-                m.d1(), m.d2(), m.d3(), m.d4());
+                m.a1(), m.b1(), m.c1(), m.d1(),
+                m.a2(), m.b2(), m.c2(), m.d2(),
+                m.a3(), m.b3(), m.c3(), m.d3(),
+                m.a4(), m.b4(), m.c4(), m.d4());
     }
 
     // ==================== 几何 + 蒙皮 ====================
