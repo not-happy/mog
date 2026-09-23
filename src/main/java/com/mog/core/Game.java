@@ -95,7 +95,7 @@ public class Game {
     /** HUD 用到的 CJK 字符（烘焙进字体图集；ASCII 自动包含） */
     private static final String HUD_CJK_CHARS =
             "帧率固定步长实体资产缓存后处理开关鼠标捕获输入调试退出相机坐标音乐存档读选中左键拾取无"
-            + "宇宙场景纪元温度指数模拟时间倍速种子暂停旋滚缩放返回地表拖拽初始化烈寒掠序乱凌空视角";
+            + "宇宙场景纪元温度指数模拟时间倍速种子暂停旋滚缩放返回地表拖拽初始化烈寒掠序乱凌空视角文明历";
 
     public void start(String[] args) {
         startInCosmos = args != null && Arrays.asList(args).contains("--cosmos");

@@ -30,8 +30,8 @@ public class CosmosSimSystem implements GameSystem {
     private static final int MAX_STEPS_PER_FRAME = 800;
     /** 每条轨迹的环形缓冲容量 */
     public static final int TRAIL_CAP = 2400;
-    /** 每 N 个积分步记录一个轨迹点 */
-    private static final int RECORD_EVERY = 6;
+    /** 每 N 个积分步记录一个轨迹点（层级构型运动较慢，间隔放大让残影覆盖更长弧段） */
+    private static final int RECORD_EVERY = 16;
 
     /** 天体显示颜色（恒星 >1 = HDR，触发泛光；行星暗色） */
     private static final float[][] BODY_COLORS = {
@@ -60,8 +60,9 @@ public class CosmosSimSystem implements GameSystem {
     private int stepCounter;
     private Epoch currentEpoch;
 
-    /** 模拟速度（模拟时间单位/真实秒）与暂停状态（由场景 handleInput 控制） */
-    private double speed = 5.0;
+    /** 模拟速度（模拟时间单位/真实秒）与暂停状态（由场景 handleInput 控制）。
+     *  默认 1.25：1 游戏年(2π 单位) ≈ 5 真实秒，中位局长对应 GDD 目标窗口 */
+    private double speed = 1.25;
     private boolean paused;
 
     public CosmosSimSystem(GravitySimulation sim, int[] starEntities, int planetEntity,

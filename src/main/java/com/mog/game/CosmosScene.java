@@ -1,5 +1,6 @@
 package com.mog.game;
 
+import com.mog.astro.GameCalendar;
 import com.mog.astro.GravitySimulation;
 import com.mog.core.Scene;
 import com.mog.core.event.EventBus;
@@ -98,7 +99,7 @@ public class CosmosScene implements Scene {
         world.addSystem(simSystem);
 
         cameraRig = new OrbitCameraRig(camera);
-        log.info("宇宙场景就绪: 三体模拟种子={} (8字形解+微扰)", sim.getSeed());
+        log.info("宇宙场景就绪: 三体模拟种子={} (层级三重星: 双星+偏心第三星)", sim.getSeed());
     }
 
     @Override
@@ -132,8 +133,8 @@ public class CosmosScene implements Scene {
         return List.of(
                 String.format("纪元: %s   温度指数: %.3f   %s", epochName, temp,
                         simSystem.isPaused() ? "[已暂停]" : ""),
-                String.format("模拟时间: %.1f   倍速: x%.1f   种子: %d",
-                        sim.getTime(), simSystem.getSpeed(), sim.getSeed()),
+                String.format("文明历: %s   倍速: x%.2f   种子: %d",
+                        GameCalendar.format(sim.getTime()), simSystem.getSpeed(), sim.getSeed()),
                 "空格 暂停   +/- 倍速   左键拖拽 旋转   滚轮 缩放   Tab 返回地表");
     }
 

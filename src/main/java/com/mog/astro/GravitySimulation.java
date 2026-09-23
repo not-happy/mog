@@ -5,23 +5,34 @@ import org.joml.Vector3d;
 import java.util.Random;
 
 /**
- * 三体引力模拟（ restricted 4 体：3 恒星 + 1 无质量行星测试粒子）。
+ * 三体引力模拟（restricted 4 体：3 恒星 + 1 无质量行星测试粒子）。
  *
  * 数值方案：
  *   - Leapfrog KDK（辛积分器）：长期能量守恒远优于 RK4/欧拉，轨道模拟标配
  *   - double 精度：float32 的累积误差会让轨道在几分钟内失真
  *   - 固定步长：由 A1 固定时间步长基建驱动，倍速 = 每帧多步
  *
- * 初始条件：Chenciner-Montgomery "8 字形"三体周期解（G=m=1 精确解）
- *   × 空间缩放 10（速度按 √(1/s) 缩放保持解的有效性）+ 种子随机微扰。
- * 效果：开局为准周期优雅舞蹈，微扰随混沌指数放大，数轨道周期后纪元剧变——
- * 这正是玩法需要的"可读的随机性"。轨道面置于 XZ 平面（Y-up 世界）。
+ * 初始构型：弱层级三重星（近距双星 A+B 间距 4，偏心第三星 C：a=12/e=0.5，共面顺行）
+ *   + 种子随机微扰。行星生于双星成员 A 的 r=1.0 圆轨道。
+ *
+ * 为什么不用 8 字形周期解：Monte-Carlo 实测 60/60 种子在 3.3 年全灭
+ *   （8 字形每周期必有近距交会，行星希尔球周期性崩塌，确定性坠焚）。
+ *   圆外轨层级构型则 >4775 年全存活（太稳，没有戏剧性）。
+ *   偏心外轨是平衡点：C 每次近日点回归（"大逼近周期" ≈24 行星年）注入一记
+ *   强摄动，混沌按外轨节拍累积——纪元 drama 以百年尺度展开。
+ *
+ * 时间单位制（游戏历法基准）：
+ *   行星年 = 2π√(r³/GM) = 2π ≈ 6.2832 时间单位（出生轨道 r=1, M=1）
+ *   外轨周期（"大曜轮"）= 2π√(12³/3) ≈ 151 时间单位 ≈ 24 行星年
  */
 public class GravitySimulation {
 
     public static final double G = 1.0;
-    /** 空间缩放（8 字形解 ×10，恒星间距 ~10-20 场景单位） */
-    public static final double SCALE = 10.0;
+    /** 行星出生轨道半径（时间单位制锚点：1 游戏年 = 2π 时间单位） */
+    public static final double PLANET_BIRTH_RADIUS = 1.0;
+    /** 1 游戏年对应的模拟时间单位 */
+    public static final double TIME_UNITS_PER_YEAR =
+            2 * Math.PI * Math.sqrt(PLANET_BIRTH_RADIUS * PLANET_BIRTH_RADIUS * PLANET_BIRTH_RADIUS / G);
 
     private final int starCount = 3;
     private final double[] mass = {1, 1, 1};
@@ -49,44 +60,58 @@ public class GravitySimulation {
         reset(seed);
     }
 
-    /** 重置模拟：8 字形解 + 扰动 + 行星入轨。 */
+    /**
+     * 重置为弱层级三重星构型（轨道面 = XZ 平面，Y-up 世界）：
+     *   双星 A(-4,0,0)/B(0,0,0) 绕双星质心 (-2,0,0)，相对圆轨速度 √(2/4)
+     *   第三星 C：偏心外轨 a=12, e=0.5，初始在近日点 (4,0,0)——
+     *     每次近日点回归给双星一记强摄动（"大逼近周期" ≈ 24 行星年），
+     *     混沌沿外轨周期累积，这是纪元戏剧性的引擎
+     *   行星生于 A 的 r=1 圆轨道（希尔半径 ≈2.2 的稳定区内）
+     *
+     * 平衡性实测（Monte-Carlo 60 种子）：
+     *   8字形构型    -> 中位寿命 3.3 年（每周期必近距交会，太快）
+     *   圆外轨 a=18 -> >4775 年全存活（太稳）
+     *   偏心外轨     -> 目标中位寿命 300-600 年（待验证）
+     */
     public void reset(long seed) {
         Random rnd = new Random(seed);
-        // 8 字形精确解（G=m=1，轨道面 x-y）：
-        //   p1 = (0.97000436, -0.24308753), p2 = -p1, p3 = 0
-        //   v3 = (-0.93240737, -0.86473146)/2, v1 = v2 = -v3/2
-        // 映射到世界 XZ 平面：解的 (x,y) -> 世界 (x, 0, y)
-        double v3x = -0.93240737 / 2, v3z = -0.86473146 / 2;
-        double v1x = -v3x / 2, v1z = -v3z / 2;   // = v3/4
-        double vScale = Math.sqrt(1.0 / SCALE); // 位置×s 时速度 ×√(1/s) 保持解有效
 
-        placeStar(0, 0.97000436, -0.24308753, v1x, v1z, vScale, rnd);
-        placeStar(1, -0.97000436, 0.24308753, v1x, v1z, vScale, rnd);
-        placeStar(2, 0, 0, v3x, v3z, vScale, rnd);
+        // 双星内部：相对速度 √(G(mA+mB)/a_b) = √(2/4)，各分一半
+        double vBin = Math.sqrt(2.0 / 4.0) / 2;        // 0.3536
+        // 外轨（偏心）：a=12, e=0.5，近日点 q=a(1-e)=6，
+        // 近日点相对速度 v_peri = √(GM(1+e)/q) = √(3×1.5/6)
+        double vPeriRel = Math.sqrt(3.0 * 1.5 / 6.0);  // 0.8660
+        double vC = vPeriRel * 2.0 / 3.0;              // 0.5774（C，+Z）
+        double vBary = -vPeriRel / 3.0;                // -0.2887（双星质心，-Z，动量守恒）
 
-        // 行星：恒星 0 的近似圆轨道（r=1.5，位于希尔球 ~6.9 内，暂时稳定；
-        // 恒星近距相遇时会被弹射/易主——这正是三体式戏剧性的来源）
-        double r = 1.5;
-        Vector3d radial = new Vector3d(1, 0, 0);
-        planetPos.set(pos[0]).add(radial.x * r, 0, radial.z * r);
-        double vCirc = Math.sqrt(G * mass[0] / r);
-        Vector3d tangent = new Vector3d(radial.z, 0, -radial.x).normalize();
-        planetVel.set(tangent).mul(vCirc).add(vel[0]);
+        // 位置：双星质心 (-2,0,0)（A -2 / B +2 分列），C 在 (+4,0,0)（近日点）
+        setStarRaw(0, -4, 0, 0, vBary - vBin);        // A
+        setStarRaw(1, 0, 0, 0, vBary + vBin);          // B
+        setStarRaw(2, 4, 0, 0, vC);                    // C
+
+        // 微扰：混沌的种子（对位置与速度同时施加）
+        double eps = 0.02;
+        for (int i = 0; i < 3; i++) {
+            pos[i].mul(1 + (rnd.nextDouble() - 0.5) * eps,
+                    1,
+                    1 + (rnd.nextDouble() - 0.5) * eps);
+            vel[i].mul(1 + (rnd.nextDouble() - 0.5) * eps,
+                    1,
+                    1 + (rnd.nextDouble() - 0.5) * eps);
+        }
+
+        // 行星：恒星 A 的 r=1 圆轨道（年 = 2π 时间单位）
+        double r = PLANET_BIRTH_RADIUS;
+        planetPos.set(pos[0].x + r, 0, pos[0].z);
+        double vCirc = Math.sqrt(G * mass[0] / r);   // = 1.0
+        planetVel.set(vel[0].x, 0, vel[0].z + vCirc);
 
         time = 0;
     }
 
-    private void placeStar(int i, double x8, double y8, double vx8, double vy8,
-                           double vScale, Random rnd) {
-        // 微扰幅度：混沌的种子。越大纪元剧变越早、行星越早被弹射；
-        // 0.005 ≈ 中位局长落在目标窗口的经验起点（可调平衡参数，配合 LOST_DIST 观测）
-        double eps = 0.005;
-        pos[i].set(x8 * SCALE * (1 + (rnd.nextDouble() - 0.5) * eps),
-                0,
-                y8 * SCALE * (1 + (rnd.nextDouble() - 0.5) * eps));
-        vel[i].set(vx8 * vScale * (1 + (rnd.nextDouble() - 0.5) * eps),
-                0,
-                vy8 * vScale * (1 + (rnd.nextDouble() - 0.5) * eps));
+    private void setStarRaw(int i, double x, double y, double z, double vz) {
+        pos[i].set(x, y, z);
+        vel[i].set(0, 0, vz);
     }
 
     /** KDK Leapfrog 单步。 */

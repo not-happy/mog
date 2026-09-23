@@ -11,20 +11,27 @@ import org.joml.Vector3d;
  */
 public class EpochClassifier {
 
-    // ===== 平衡性参数（模拟单位：恒星间距 ~10-20，行星轨道 r=1.5）=====
-    /** 灼热阈值：T 超过即烈曜 */
-    private static final double SCORCH_T = 0.9;
-    /** 严寒阈值：T 低于即寒曜 */
-    private static final double FREEZE_T = 0.05;
+    // ===== 平衡性参数（层级构型：行星 r=1 绕双星成员 A，伴星 B 距 ~4，第三星 C 距 ~18-24；
+    //       出生温度基线 T≈1.07）=====
+    /** 灼热阈值：T 超过即烈曜（出生基线 1.07，宿主星 d<0.75 时触发） */
+    private static final double SCORCH_T = 1.8;
+    /** 严寒阈值：T 低于即寒曜（宿主星 d>1.5 时触发） */
+    private static final double FREEZE_T = 0.45;
     /** 序曜判定：唯一近星距离上限 */
-    private static final double ORDER_NEAR_DIST = 3.5;
-    /** 序曜判定：其余恒星的最小安全距离 */
-    private static final double ORDER_FAR_DIST = 6.0;
+    private static final double ORDER_NEAR_DIST = 1.8;
+    /** 序曜判定：其余恒星的最小安全距离（双星伴星最近 ~3，不误伤） */
+    private static final double ORDER_FAR_DIST = 2.5;
     /** 掠曜判定：接近速率阈值（距离变化率，单位/时间）与预警距离 */
-    private static final double FLYBY_APPROACH_RATE = 2.0;
-    private static final double FLYBY_DIST = 9.0;
+    private static final double FLYBY_APPROACH_RATE = 1.5;
+    private static final double FLYBY_DIST = 5.0;
     /** 三曜凌空：从行星看两两恒星夹角阈值（弧度，~26°） */
     private static final double SYZYGY_ANGLE = 0.45;
+    /**
+     * 三曜凌空的距离条件：三颗恒星全部逼近到此距离内才算"凌空"。
+     * 没有此条件时，行星绕双星成员公转每年都会与伴星视觉成列——凌空沦为日常。
+     * 加上它后，凌空 = 第三星也杀到近前的真·三星汇聚（终局级灾难前兆）。
+     */
+    private static final double SYZYGY_DIST = 6.0;
     /**
      * 失家判定：行星与全部恒星的距离超过此值即视为被弹射出系统
      * （系统尺度 ~20，35 = 明确逃逸；弹射后直线漂流不再返回）
@@ -73,8 +80,13 @@ public class EpochClassifier {
         return new Epoch(type, temp, nearest, nearestDist);
     }
 
-    /** 三曜凌空：从行星看，三颗恒星两两夹角都小于阈值。 */
+    /** 三曜凌空：三颗恒星全部近距逼近，且从行星看两两夹角都小于阈值。 */
     private boolean isSyzygy(GravitySimulation sim, Vector3d p) {
+        for (int i = 0; i < 3; i++) {
+            if (dist[i] > SYZYGY_DIST) {
+                return false; // 有恒星远在天边，谈不上"凌空"
+            }
+        }
         for (int i = 0; i < 3; i++) {
             for (int j = i + 1; j < 3; j++) {
                 tmpA.set(sim.getStarPos(i)).sub(p).normalize();
