@@ -148,6 +148,9 @@ public final class ModelLoader {
                 if (boneCount > 96) {
                     log.warn("模型 {} 骨骼数 {} 超过着色器上限 96，渲染将不完整", filePath, boneCount);
                 }
+                // 注：Assimp 可能对非 Y-up 源数据（如 COLLADA2GLTF 的 Z_UP 资产）在根节点
+                // 插入校正旋转，而逆绑定矩阵保持原始——蒙皮输出即已"立正"。
+                // 场景放置蒙皮模型时不要再叠加实体级校正旋转（历史事故：双重校正躺平）。
             }
 
             // ===== 5. 动画模型强制走 PBR 材质（蒙皮管线只提供 PBR 着色器）=====
