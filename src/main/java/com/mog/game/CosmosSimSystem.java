@@ -47,11 +47,13 @@ public class CosmosSimSystem implements GameSystem {
      *  ≈ 3 游戏年 ≈ 默认倍速下 38 真实秒的运动历史，点距致密贴住天体） */
     private static final int RECORD_EVERY = 4;
 
-    /** 天体显示颜色（恒星 >1 = HDR，触发泛光；行星暗色） */
+    /** 天体拖尾颜色。恒星用 HDR 值（>1，与球体同色系）：头部亮度超过泛光提取阈值
+     *  （PostProcessor 0.75 + 软膝），拖尾随球体一起发光——否则细线淹没在恒星自身光晕里。
+     *  行星保持 SDR 暗色（不抢恒星的戏）。 */
     private static final float[][] BODY_COLORS = {
-            {1.00f, 0.85f, 0.55f},   // 曜一（金黄）
-            {1.00f, 0.55f, 0.30f},   // 曜二（橙红）
-            {0.65f, 0.75f, 1.00f},   // 曜三（蓝白）
+            {2.00f, 1.70f, 1.10f},   // 曜一（金黄 HDR）
+            {2.00f, 1.10f, 0.60f},   // 曜二（橙红 HDR）
+            {1.30f, 1.50f, 2.00f},   // 曜三（蓝白 HDR）
             {0.35f, 0.65f, 0.95f},   // 行星（蓝）
     };
 
