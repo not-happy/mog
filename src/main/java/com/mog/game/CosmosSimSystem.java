@@ -129,6 +129,10 @@ public class CosmosSimSystem implements GameSystem {
             log.info(String.format("纪元变更: %s -> %s (温度 %.3f, 最近曜 %.2f)",
                     currentEpoch != null ? currentEpoch.type().getDisplayName() : "(初始)",
                     epoch.type().getDisplayName(), epoch.temperature(), epoch.nearestDist()));
+            if (epoch.type() == com.mog.astro.EpochType.LOST) {
+                log.warn("母星已被弹射出三体系统，沿切线直线漂流——正式游戏中此事件触发"
+                        + "『冰封远航』毁灭结算（文明冻结 -> 传承点结算 -> 新种子重开）");
+            }
         }
         currentEpoch = epoch;
     }

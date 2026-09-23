@@ -78,7 +78,9 @@ public class GravitySimulation {
 
     private void placeStar(int i, double x8, double y8, double vx8, double vy8,
                            double vScale, Random rnd) {
-        double eps = 0.01; // 微扰幅度：混沌的种子
+        // 微扰幅度：混沌的种子。越大纪元剧变越早、行星越早被弹射；
+        // 0.005 ≈ 中位局长落在目标窗口的经验起点（可调平衡参数，配合 LOST_DIST 观测）
+        double eps = 0.005;
         pos[i].set(x8 * SCALE * (1 + (rnd.nextDouble() - 0.5) * eps),
                 0,
                 y8 * SCALE * (1 + (rnd.nextDouble() - 0.5) * eps));

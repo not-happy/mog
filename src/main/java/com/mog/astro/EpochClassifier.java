@@ -25,6 +25,11 @@ public class EpochClassifier {
     private static final double FLYBY_DIST = 9.0;
     /** 三曜凌空：从行星看两两恒星夹角阈值（弧度，~26°） */
     private static final double SYZYGY_ANGLE = 0.45;
+    /**
+     * 失家判定：行星与全部恒星的距离超过此值即视为被弹射出系统
+     * （系统尺度 ~20，35 = 明确逃逸；弹射后直线漂流不再返回）
+     */
+    private static final double LOST_DIST = 35.0;
 
     private final Vector3d tmpA = new Vector3d();
     private final Vector3d tmpB = new Vector3d();
@@ -50,7 +55,9 @@ public class EpochClassifier {
         }
 
         EpochType type;
-        if (isSyzygy(sim, p)) {
+        if (nearestDist > LOST_DIST) {
+            type = EpochType.LOST;           // 弹射逃逸优先级最高（终局事件）
+        } else if (isSyzygy(sim, p)) {
             type = EpochType.SYZYGY;
         } else if (temp > SCORCH_T) {
             type = EpochType.SCORCH;
