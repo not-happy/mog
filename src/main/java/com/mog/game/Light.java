@@ -10,11 +10,19 @@ public class Light {
 
     private final Vector3f direction;
     private final Vector3f color;
-    private final float intensity;
+    private float intensity;
 
     public Light(Vector3f direction, Vector3f color, float intensity) {
         this.direction = direction;
         this.color = color;
+        this.intensity = intensity;
+    }
+
+    /**
+     * 就地改写光强（地表太阳光每步随宿主星/纪元变化——SurfaceSky 计算后写回）。
+     * direction/color 经 getter 返回活引用，调用方直接 set，避免每帧重建 Light。
+     */
+    public void setIntensity(float intensity) {
         this.intensity = intensity;
     }
 

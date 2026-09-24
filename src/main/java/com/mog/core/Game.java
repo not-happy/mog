@@ -12,7 +12,9 @@ import com.mog.game.CameraRig;
 import com.mog.game.CosmosScene;
 import com.mog.game.CosmosSession;
 import com.mog.game.DemoScene;
+import com.mog.game.Light;
 import com.mog.game.SaveManager;
+import com.mog.game.SurfaceScene;
 import com.mog.input.InputHandler;
 import com.mog.physics.Ray;
 import com.mog.render.Environment;
@@ -110,7 +112,9 @@ public class Game {
             + "宇宙场景纪元温度指数模拟时间倍速种子暂停旋滚缩放返回地表拖拽初始化烈寒掠序乱凌空视角文明历"
             // S2 玩法层文案：纪元名(曜期/三家深空)/终局字幕(【】乐章终结·坠焚毁灭算冰封远航恒弹射)
             // /历法(年第日)/宿主星与易天/操作提示(空格转轮)/地表准星与切换/初始化省略号
-            + "曜期三家失深已【】乐章终结坠焚·毁灭算冰封远航恒弹射宿主易天次年第日格转轮准星切换…";
+            + "曜期三家失深已【】乐章终结坠焚·毁灭算冰封远航恒弹射宿主易天次年第日格转轮准星切换…"
+            // C2 地表场景操作提示：WASD 平移 / 中键拖拽 / 右键旋转（键已在"左键拾取"烘焙）
+            + "移平右";
 
     public void start(String[] args) {
         List<String> argList = args != null ? Arrays.asList(args) : List.of();
@@ -191,10 +195,13 @@ public class Game {
         currentSlot = startSlot;
         scene = createScene(currentSlot);
         scene.init();
+        applySlotRenderState(currentSlot);
 
-        // IBL 环境光照：程序化天空 -> 辐照度/预滤波/BRDF LUT
+        // IBL 环境光照：程序化天空 -> 辐照度/预滤波/BRDF LUT。
+        // 用中性默认光与启动场景解耦（lit 管线本就不采样 IBL；地表/宇宙的方向光每帧可变）。
+        // C3 债：建造上 PBR 材质后，纪元色需要进 IBL——届时做异步双 Environment 轮换或预烘焙套。
         environment = new Environment();
-        environment.build(scene.getLight());
+        environment.build(Light.defaults());
         renderer.setEnvironment(environment);
 
         // 文本 HUD：探测系统字体烘焙图集（失败则降级为无文本，不影响运行）
@@ -212,12 +219,26 @@ public class Game {
         wireEvents();
     }
 
-    /** 场景工厂：槽位 -> 场景实例。SURFACE 暂由 DemoScene 顶替（C2 地表场景接入后替换）。 */
+    /** 场景工厂：槽位 -> 场景实例。 */
     private Scene createScene(SceneSlot slot) {
         return switch (slot) {
+            case SURFACE -> new SurfaceScene(eventBus, cosmos, post);
             case COSMOS -> new CosmosScene(cosmos);
-            case SURFACE, DEMO -> new DemoScene(assets, eventBus);
+            case DEMO -> new DemoScene(assets, eventBus);
         };
+    }
+
+    /** 槽位级渲染全局态（tint / 阴影正交参数都是 Game 级状态，场景不各自为政）：
+     *  切换点集中复位；地表场景的纪元染色由其首次 update 依据当前纪元重新写入。 */
+    private void applySlotRenderState(SceneSlot slot) {
+        post.setTint(1f, 1f, 1f, 0f);
+        if (slot == SceneSlot.SURFACE) {
+            // 地表：64m 建造网格 + 仰角 ≥25° 的长光程（extent 48 覆盖半对角线 ~45）
+            renderer.setShadowParams(90f, 48f, 1f, 220f);
+        } else {
+            // 宇宙/演示场默认（场景主体 ±10）
+            renderer.setShadowParams(25f, 18f, 1f, 60f);
+        }
     }
 
     /** 组合根：注册各类资产的加载/释放策略。 */
@@ -384,10 +405,8 @@ public class Game {
         currentSlot = next;
         scene = createScene(next);
         scene.init();
-        // 渲染全局态复位集中在切换点（色调分级/阴影正交参数都是 Game 级状态，
-        // 场景不各自为政；地表场景接入后在此按槽位设置专属参数）
-        post.setTint(1f, 1f, 1f, 0f);
-        renderer.setShadowParams(25f, 18f, 1f, 60f);
+        // 渲染全局态复位集中在切换点（色调分级/阴影正交参数按槽位重置）
+        applySlotRenderState(next);
         window.setMouseCaptured(scene.wantsMouseCapture());
         input.resetMouse();
     }
