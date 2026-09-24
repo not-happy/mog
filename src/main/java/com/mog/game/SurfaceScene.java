@@ -4,14 +4,14 @@ import com.mog.astro.Epoch;
 import com.mog.astro.EpochType;
 import com.mog.astro.GameCalendar;
 import com.mog.core.Scene;
-import com.mog.core.event.BuildingPlacedEvent;
-import com.mog.core.event.BuildingRemovedEvent;
 import com.mog.core.event.EventBus;
 import com.mog.ecs.World;
 import com.mog.ecs.components.BuildingComponent;
 import com.mog.ecs.components.MaterialComponent;
 import com.mog.ecs.components.MeshComponent;
+import com.mog.ecs.components.ResourceNodeComponent;
 import com.mog.ecs.components.TransformComponent;
+import com.mog.ecs.systems.SurfaceViewSystem;
 import com.mog.ecs.systems.TransformSystem;
 import com.mog.input.InputHandler;
 import com.mog.physics.ScreenPicker;
@@ -28,7 +28,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_1;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_EQUAL;
@@ -39,41 +41,46 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
 
 /**
- * 地表场景（C3 建造闭环）：45° RTS 建造视角下的行星地表——网格地形 + 建造网格 +
+ * 地表场景（C3）：45° RTS 建造视角下的行星地表——网格地形 + 建造网格 +
  * 由三体模拟实时驱动的太阳与纪元氛围（GDD D5："宇宙视角看到的三星之舞，
  * 就是地表经历的天气"）。玩家动词：左键放置建筑、Shift+左键拆除、数字键 1-5 选型。
  *
- * 模拟真源是 Game 级持久的 {@link CosmosSession}：本场景只读取（太阳方向/纪元/历法），
- * 时间控制（空格暂停、+- 倍速）也作用于同一会话——地表照常控时。
+ * <p><b>视图薄壳</b>：逻辑真源是 Game 级持久的双会话——{@link CosmosSession}
+ * （三体模拟：太阳方向/纪元/历法/时间控制）与 {@link SurfaceSession}（地表状态：
+ * 占位/建筑/节点/库存）。本场景 init 时从会话全量重建实体，并维护私有的
+ * "逻辑 id -> 实体 id" 映射（易失，随场景销毁重建——逻辑 id 跨 Tab 恒定，无悬挂）；
+ * 每帧视图状态由 {@link SurfaceViewSystem} 从会话抄写。这兑现了 D5"宇宙视角时
+ * 地表模拟继续运行"，也修复了旧版"建筑 Tab 往返即丢"缺陷。
  *
- * 红线：场景不得订阅 EventBus——EventBus 只有 clear() 没有退订，
- * 场景实例随 Tab 切换销毁重建，订阅会跨场景泄漏。本场景**只发不订**：
- * 放置/拆除发布 BuildingPlacedEvent/BuildingRemovedEvent，订阅一律在 Game.wireEvents。
+ * <p>红线：场景零事件——EventBus 连"发"都不做，放置/拆除/枯竭事件全部由
+ * SurfaceSession 发布，订阅一律在 Game.wireEvents（EventBus 只有 clear() 没有退订，
+ * 场景实例随 Tab 切换销毁重建，订阅会跨场景泄漏）。构造入参 eventBus 因此闲置，
+ * 仅保持 Game 接线签名稳定。
  *
  * 拾取（handleInput 内每帧）：窗口坐标 -> NDC -> 逆 projView 射线 -> 打 y=0 平面
  * -> 命中点 -> 格。守卫链顺序不可换：inBounds 必须先于 worldToCell（钳制陷阱）。
  * 矩阵取 renderOverlay 缓存的上一帧 projection（Renderer 返回活对象，须值拷贝；
  * 首帧无缓存跳过拾取，resize 一帧自愈）。
  *
- * cleanup 只释放本场景 GL 资源（地形/网格线/方盒），绝不销毁会话。
+ * cleanup 只释放本场景 GL 资源（地形/网格线/方盒/节点球），绝不销毁会话。
  */
 public class SurfaceScene implements Scene {
 
     private static final Logger log = LoggerFactory.getLogger(SurfaceScene.class);
 
-    /** 地形起伏幅度（米）：缓丘陵，不遮挡 RTS 视线 */
-    private static final float HEIGHT_SCALE = 0.25f;
     /** 地形配色（lit 管线 materialColor）：暗橄榄——寒曜行星的苔原基调 */
     private static final Vector3f TERRAIN_COLOR = new Vector3f(0.32f, 0.35f, 0.28f);
     /** 拾取射线平面高度与最远距离（米）：地表缓丘 ±0.25m，打 y=0 足够 */
     private static final float PICK_PLANE_Y = 0f;
     private static final float PICK_MAX_DIST = 1000f;
-    /** 初始预置指挥中枢的格坐标（网格中心 2×2 足迹的最小角） */
-    private static final int HUB_CELL_X = 15;
-    private static final int HUB_CELL_Z = 15;
+    /** 资源节点球配色（顶点色管线：无 MaterialComponent 即免阴影遍，1 draw/个） */
+    private static final float[] NODE_COLOR_RICH = {0.85f, 0.62f, 0.30f};   // 琥珀矿脉
+    private static final float[] NODE_COLOR_SPENT = {0.34f, 0.34f, 0.38f};  // 枯竭灰（墓碑）
 
+    @SuppressWarnings("unused") // 场景零事件：发布已上收 SurfaceSession，入参仅保签名稳定
     private final EventBus eventBus;
-    private final CosmosSession session;
+    private final CosmosSession cosmos;
+    private final SurfaceSession surface;
     private final PostProcessor post;
 
     private final World world = new World();
@@ -84,12 +91,12 @@ public class SurfaceScene implements Scene {
     private RtsCameraRig cameraRig;
     private GridRenderer grid;
     private final List<Mesh> ownedMeshes = new ArrayList<>();
-    private long terrainSeed;
     /** 已应用的纪元色调（节流：纪元类型变化才写 PostProcessor，避免每帧 setUniform 级调用） */
     private EpochType tintedEpoch;
 
-    // ===== C3 建造状态 =====
-    private final OccupancyGrid occupancy = new OccupancyGrid();
+    // ===== C3 建造视图状态 =====
+    /** 逻辑占位 id -> ECS 实体 id（场景私有易失映射，init 重建；会话侧逻辑 id 跨 Tab 恒定） */
+    private final Map<Integer, Integer> entityByLogical = new HashMap<>();
     /** 当前选型（数字键 1-5 切换） */
     private BuildingType selected = BuildingType.CRYO_POD;
     /** 共享立方体 Mesh（全部建筑一个 draw 单元，cleanup 统一释放） */
@@ -114,20 +121,22 @@ public class SurfaceScene implements Scene {
     private final Vector3f hitScratch = new Vector3f();
     private final Vector3f colorScratch = new Vector3f();
 
-    public SurfaceScene(EventBus eventBus, CosmosSession session, PostProcessor post) {
+    public SurfaceScene(EventBus eventBus, CosmosSession cosmos,
+                        SurfaceSession surface, PostProcessor post) {
         this.eventBus = eventBus;
-        this.session = session;
+        this.cosmos = cosmos;
+        this.surface = surface;
         this.post = post;
     }
 
     @Override
     public void init() {
-        // 地形种子从乐章种子派生：每个乐章的地表独一无二，但同一乐章内切场景回来完全一致
-        terrainSeed = session.getSim().getSeed() * 31 + 7;
+        long terrainSeed = surface.getTerrainSeed();
+        float heightScale = SurfaceSession.HEIGHT_SCALE;
 
         // ===== 地形（lit 管线：位置 + 解析法线，颜色走材质）=====
         Mesh terrain = TerrainBuilder.build(
-                BuildGrid.CELLS, BuildGrid.CELL_SIZE, HEIGHT_SCALE, terrainSeed);
+                BuildGrid.CELLS, BuildGrid.CELL_SIZE, heightScale, terrainSeed);
         ownedMeshes.add(terrain);
         int terrainEntity = world.createEntity("terrain");
         world.addComponent(terrainEntity, new TransformComponent());
@@ -136,37 +145,59 @@ public class SurfaceScene implements Scene {
                 new MaterialComponent(new Material(new Vector3f(TERRAIN_COLOR), 8f, 0.05f)));
 
         // ===== 建造网格线（overlay 遍：alpha 混合贴地 + 光标高亮）=====
-        grid = new GridRenderer(BuildGrid.CELLS, BuildGrid.CELL_SIZE, HEIGHT_SCALE, terrainSeed);
+        grid = new GridRenderer(BuildGrid.CELLS, BuildGrid.CELL_SIZE, heightScale, terrainSeed);
         grid.init();
 
-        // ===== 建造状态复位（场景随 Tab 销毁重建，字段态必须显式归零）=====
-        occupancy.reset();
+        // ===== 视图状态复位（场景随 Tab 销毁重建，字段态必须显式归零）=====
+        entityByLogical.clear();
         selected = BuildingType.CRYO_POD;
         cursorValid = false;
         projectionValid = false;
 
-        // ===== 初始预置：网格中心 2×2 指挥中枢（不发事件，避免启动噪音；可拆，规则统一）=====
+        // ===== 从会话全量重建：建筑（共享方盒，lit 管线）=====
         boxMesh = Shapes.createCube();
         ownedMeshes.add(boxMesh);
-        spawnBuilding(BuildingType.COMMAND_HUB, HUB_CELL_X, HUB_CELL_Z, false);
+        for (BuildingRecord b : surface.getBuildings()) {
+            spawnBuildingView(b.logicalId(), b.type(), b.cellX(), b.cellZ());
+        }
 
+        // ===== 从会话全量重建：资源节点（双共享球 Mesh，顶点色管线 1 draw/个免阴影遍；
+        // 位置/缩放/枯竭换 Mesh 每帧由 SurfaceViewSystem 抄会话真源）=====
+        Mesh nodeRich = Shapes.createColoredSphere(10, 7,
+                NODE_COLOR_RICH[0], NODE_COLOR_RICH[1], NODE_COLOR_RICH[2]);
+        Mesh nodeSpent = Shapes.createColoredSphere(10, 7,
+                NODE_COLOR_SPENT[0], NODE_COLOR_SPENT[1], NODE_COLOR_SPENT[2]);
+        ownedMeshes.add(nodeRich);
+        ownedMeshes.add(nodeSpent);
+        for (ResourceNode n : surface.getNodes()) {
+            int e = world.createEntity("node-" + n.getId());
+            world.addComponent(e, new TransformComponent()); // 首帧即被视图系统覆写
+            world.addComponent(e, new MeshComponent(n.isDepleted() ? nodeSpent : nodeRich));
+            world.addComponent(e, new ResourceNodeComponent(n.getId()));
+            entityByLogical.put(n.getId(), e);
+        }
+
+        // 视图同步系统先于 TransformSystem：同帧内先抄会话再算世界矩阵
+        world.addSystem(new SurfaceViewSystem(surface, nodeRich, nodeSpent));
         world.addSystem(new TransformSystem());
         cameraRig = new RtsCameraRig(camera);
 
-        log.info("地表场景就绪: 乐章种子={} 地形种子={} 建造网格 {}×{} (格 {}m, 半宽 {}m)",
-                session.getSim().getSeed(), terrainSeed,
-                BuildGrid.CELLS, BuildGrid.CELLS, BuildGrid.CELL_SIZE, BuildGrid.HALF_EXTENT);
+        log.info("地表场景就绪: 乐章种子={} 地形种子={} 建筑={} 节点={} 建造网格 {}×{}",
+                cosmos.getSim().getSeed(), terrainSeed,
+                surface.getBuildings().size(), surface.getNodes().size(),
+                BuildGrid.CELLS, BuildGrid.CELLS);
     }
 
     /**
-     * 建筑落位：足迹最小角格 (cellX,cellZ) -> 世界中心（多格足迹取中心格点），
-     * 底面贴地形。占位登记 + 可选事件发布（预置建筑 announce=false）。
+     * 建筑视图落位（占位/扣费/事件已与会话侧完成，这里只建实体 + 登记映射）：
+     * 足迹最小角格 (cellX,cellZ) -> 世界中心（多格足迹取中心格点），底面贴地形。
      * 放置是低频操作，组件/Material 分配可接受；拾取路径才要求全 scratch。
      */
-    private int spawnBuilding(BuildingType type, int cellX, int cellZ, boolean announce) {
+    private void spawnBuildingView(int logicalId, BuildingType type, int cellX, int cellZ) {
         float x = BuildGrid.cellToWorld(cellX) + (type.getFootW() - 1) * BuildGrid.CELL_SIZE / 2f;
         float z = BuildGrid.cellToWorld(cellZ) + (type.getFootD() - 1) * BuildGrid.CELL_SIZE / 2f;
-        float y = TerrainBuilder.heightAt(x, z, HEIGHT_SCALE, terrainSeed) + type.getSizeY() / 2f;
+        float y = TerrainBuilder.heightAt(x, z, SurfaceSession.HEIGHT_SCALE,
+                surface.getTerrainSeed()) + type.getSizeY() / 2f;
 
         int e = world.createEntity("building-" + type.name().toLowerCase());
         TransformComponent t = new TransformComponent();
@@ -178,13 +209,7 @@ public class SurfaceScene implements Scene {
         world.addComponent(e, new MaterialComponent(
                 new Material(new Vector3f(colorScratch), 16f, 0.3f)));
         world.addComponent(e, new BuildingComponent(type, cellX, cellZ));
-
-        occupancy.place(cellX, cellZ, type.getFootW(), type.getFootD(), e);
-        if (announce) {
-            eventBus.publish(new BuildingPlacedEvent(
-                    e, type.name(), cellX, cellZ, type.getFootW(), type.getFootD()));
-        }
-        return e;
+        entityByLogical.put(logicalId, e);
     }
 
     @Override
@@ -192,7 +217,7 @@ public class SurfaceScene implements Scene {
         world.update(deltaTime);
 
         // ===== 太阳：三体模拟 -> 地表方向光（就地改写，零分配）=====
-        float intensity = SurfaceSky.computeSun(session, sunDirScratch, sunColorScratch);
+        float intensity = SurfaceSky.computeSun(cosmos, sunDirScratch, sunColorScratch);
         sun.getDirection().set(sunDirScratch);
         sun.getColor().set(sunColorScratch);
         sun.setIntensity(intensity);
@@ -200,7 +225,7 @@ public class SurfaceScene implements Scene {
         // ===== 纪元色调分级（GDD D7）：类型变化时节流写入 =====
         // tint/阴影参数是 Game 级全局态——切换复位集中在 Game.switchScene，
         // 这里只负责"在地表期间"按纪元染色
-        Epoch epoch = session.getCurrentEpoch();
+        Epoch epoch = cosmos.getCurrentEpoch();
         EpochType type = epoch != null ? epoch.type() : null;
         if (type != tintedEpoch) {
             tintedEpoch = type;
@@ -216,13 +241,13 @@ public class SurfaceScene implements Scene {
     public void handleInput(InputHandler input) {
         // 与宇宙场景共享同一会话的时间控制：地表也能暂停/倍速
         if (input.isKeyJustPressed(GLFW_KEY_SPACE)) {
-            session.togglePause();
+            cosmos.togglePause();
         }
         if (input.isKeyJustPressed(GLFW_KEY_EQUAL)) {
-            session.multiplySpeed(2.0);
+            cosmos.multiplySpeed(2.0);
         }
         if (input.isKeyJustPressed(GLFW_KEY_MINUS)) {
-            session.multiplySpeed(0.5);
+            cosmos.multiplySpeed(0.5);
         }
 
         // ===== 数字键 1-5 选型（GLFW_KEY_1..5 连续，byHotkey 越界返回 null 防御）=====
@@ -252,7 +277,7 @@ public class SurfaceScene implements Scene {
 
     /**
      * 光标 -> 网格拾取（守卫链，顺序不可换）。任一步失败：光标无效 + 高亮隐藏。
-     * ⑧ inBounds 必须先于 worldToCell——worldToCell 会钳制越界坐标（BuildLogicTest 有实锤断言）。
+     * inBounds 必须先于 worldToCell——worldToCell 会钳制越界坐标（BuildLogicTest 有实锤断言）。
      */
     private void updateCursor(InputHandler input) {
         if (!projectionValid
@@ -285,7 +310,7 @@ public class SurfaceScene implements Scene {
         cursorCellZ = BuildGrid.worldToCell(hitScratch.z);
         cursorValid = true;
         grid.setHighlight(cursorCellX, cursorCellZ,
-                occupancy.canPlace(cursorCellX, cursorCellZ,
+                surface.canPlace(cursorCellX, cursorCellZ,
                         selected.getFootW(), selected.getFootD()));
     }
 
@@ -298,43 +323,40 @@ public class SurfaceScene implements Scene {
     private void refreshHighlight() {
         if (cursorValid) {
             grid.setHighlight(cursorCellX, cursorCellZ,
-                    occupancy.canPlace(cursorCellX, cursorCellZ,
+                    surface.canPlace(cursorCellX, cursorCellZ,
                             selected.getFootW(), selected.getFootD()));
         }
     }
 
-    /** 左键放置：canPlace 失败静默（红高亮已是反馈）。 */
+    /** 左键放置：会话原子序（canPlace->canAfford->扣矿->占位->事件）失败静默（红高亮已是反馈）。 */
     private void tryPlace() {
         if (!cursorValid) {
             return;
         }
-        if (!occupancy.canPlace(cursorCellX, cursorCellZ,
-                selected.getFootW(), selected.getFootD())) {
-            return;
+        int logicalId = surface.placeBuilding(selected, cursorCellX, cursorCellZ, true);
+        if (logicalId >= 0) {
+            spawnBuildingView(logicalId, selected, cursorCellX, cursorCellZ);
+            refreshHighlight();
         }
-        spawnBuilding(selected, cursorCellX, cursorCellZ, true);
-        refreshHighlight();
     }
 
-    /** Shift+左键拆除：光标格命中任一覆盖格即可拆（多格足迹 entityAt 逐格登记）。 */
+    /** Shift+左键拆除：光标格命中任一覆盖格即可拆；资源节点不可拆（会话侧拒绝）。 */
     private void tryRemove() {
         if (!cursorValid) {
             return;
         }
-        int victim = occupancy.entityAt(cursorCellX, cursorCellZ);
-        if (victim < 0) {
+        int logical = surface.logicalAt(cursorCellX, cursorCellZ);
+        if (logical < 0) {
             return;
         }
-        BuildingComponent bc = world.getComponent(victim, BuildingComponent.class);
-        if (bc == null) {
-            return;   // 防御：占位登记与组件不一致时不动世界，等 reset 自愈
+        if (surface.removeBuildingAt(cursorCellX, cursorCellZ)) {
+            Integer e = entityByLogical.remove(logical);
+            if (e != null) {
+                world.destroyEntity(e);
+            }
+            refreshHighlight();
         }
-        BuildingType type = bc.getType();
-        world.destroyEntity(victim);
-        occupancy.clear(bc.getCellX(), bc.getCellZ(), type.getFootW(), type.getFootD());
-        eventBus.publish(new BuildingRemovedEvent(
-                victim, type.name(), bc.getCellX(), bc.getCellZ()));
-        refreshHighlight();
+        // 会话拒绝（资源节点）：不动世界，静默
     }
 
     @Override
@@ -347,27 +369,27 @@ public class SurfaceScene implements Scene {
 
     @Override
     public List<String> getHudLines() {
-        Epoch epoch = session.getCurrentEpoch();
+        Epoch epoch = cosmos.getCurrentEpoch();
         String epochName = epoch != null ? epoch.type().getDisplayName() : "初始化…";
         double temp = epoch != null ? epoch.temperature() : 0;
-        int host = session.getHostTracker().getHost();
+        int host = cosmos.getHostTracker().getHost();
         List<String> lines = new ArrayList<>(6);
-        if (session.isRunEnded()) {
-            lines.add("【乐章终结: " + session.getEnding().getDisplayName() + "】");
+        if (cosmos.isRunEnded()) {
+            lines.add("【乐章终结: " + cosmos.getEnding().getDisplayName() + "】");
         }
         lines.add(String.format("纪元: %s   温度指数: %.3f   宿主星: %s",
                 epochName, temp, host >= 0 ? "曜" + (host + 1) : "无"));
         lines.add(String.format("文明历: %s   易天: %d 次   倍速: x%.2f   %s",
-                GameCalendar.format(session.getSim().getTime()),
-                session.getHostTracker().getSwitchCount(),
-                session.getSpeed(),
-                session.isPaused() ? "[已暂停]" : ""));
+                GameCalendar.format(cosmos.getSim().getTime()),
+                cosmos.getHostTracker().getSwitchCount(),
+                cosmos.getSpeed(),
+                cosmos.isPaused() ? "[已暂停]" : ""));
         lines.add(String.format("建筑: %s (%dx%d)",
                 selected.getDisplayName(), selected.getFootW(), selected.getFootD()));
         lines.add(cursorValid
                 ? String.format("格坐标: %d,%d", cursorCellX, cursorCellZ)
                 : "格坐标: --,--");
-        lines.add("已建: " + occupancy.buildingCount());
+        lines.add("已建: " + surface.getBuildings().size());
         return lines;
     }
 
@@ -408,12 +430,13 @@ public class SurfaceScene implements Scene {
 
     @Override
     public void cleanup() {
-        // 只释放视图资源——会话（模拟/乐章状态）跨场景存活，绝不能碰
+        // 只释放视图资源——会话（模拟/地表状态）跨场景存活，绝不能碰
         if (grid != null) {
             grid.cleanup();
             grid = null;
         }
         ownedMeshes.forEach(Mesh::cleanup);
         ownedMeshes.clear();
+        entityByLogical.clear();
     }
 }

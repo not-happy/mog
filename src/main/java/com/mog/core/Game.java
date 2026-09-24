@@ -8,6 +8,7 @@ import com.mog.core.event.CollisionEvent;
 import com.mog.core.event.EpochChangedEvent;
 import com.mog.core.event.EventBus;
 import com.mog.core.event.PostToggleEvent;
+import com.mog.core.event.ResourceDepletedEvent;
 import com.mog.core.event.WindowResizedEvent;
 import com.mog.ecs.components.WorldAabbComponent;
 import com.mog.game.CameraRig;
@@ -17,6 +18,7 @@ import com.mog.game.DemoScene;
 import com.mog.game.Light;
 import com.mog.game.SaveManager;
 import com.mog.game.SurfaceScene;
+import com.mog.game.SurfaceSession;
 import com.mog.input.InputHandler;
 import com.mog.physics.Ray;
 import com.mog.render.Environment;
@@ -74,6 +76,9 @@ public class Game {
     /** 宇宙会话（三体模拟唯一真源）：Game 级持久，固定步长循环里 tick——
      *  地表期间模拟照常推进（GDD D5 一致性铁律），场景切换不重开局 */
     private final CosmosSession cosmos = new CosmosSession(eventBus);
+    /** 地表会话（建造/资源/采集者逻辑唯一真源）：Game 级持久——宇宙视角时
+     *  地表模拟继续运行（GDD D5），建筑跨 Tab 往返不丢；构造须在 cosmos 之后 */
+    private final SurfaceSession surface = new SurfaceSession(eventBus, cosmos);
 
     private Window window;
     private Timer timer;
@@ -227,7 +232,7 @@ public class Game {
     /** 场景工厂：槽位 -> 场景实例。 */
     private Scene createScene(SceneSlot slot) {
         return switch (slot) {
-            case SURFACE -> new SurfaceScene(eventBus, cosmos, post);
+            case SURFACE -> new SurfaceScene(eventBus, cosmos, surface, post);
             case COSMOS -> new CosmosScene(cosmos);
             case DEMO -> new DemoScene(assets, eventBus);
         };
@@ -291,7 +296,7 @@ public class Game {
         });
         // 纪元变更 -> 提示音（日志由 CosmosSession 记录）
         eventBus.subscribe(EpochChangedEvent.class, e -> audio.playBlip());
-        // 建筑放置/拆除 -> 提示音 + 日志（场景只发不订，订阅一律集中在此）
+        // 建筑放置/拆除 -> 提示音 + 日志（SurfaceSession 发布，场景零事件，订阅一律集中在此）
         eventBus.subscribe(BuildingPlacedEvent.class, e -> {
             log.info("建造: {} 落位 格({},{}) 足迹 {}x{}",
                     e.typeName(), e.cellX(), e.cellZ(), e.footW(), e.footD());
@@ -299,6 +304,11 @@ public class Game {
         });
         eventBus.subscribe(BuildingRemovedEvent.class, e -> {
             log.info("拆除: {} 格({},{})", e.typeName(), e.cellX(), e.cellZ());
+            audio.playBlip();
+        });
+        // 资源节点枯竭 -> 日志 + 警示音（批 3 换专用 playDepleted 音效）
+        eventBus.subscribe(ResourceDepletedEvent.class, e -> {
+            log.info("资源枯竭: 节点#{} 格({},{})", e.nodeId(), e.cellX(), e.cellZ());
             audio.playBlip();
         });
     }
@@ -331,11 +341,13 @@ public class Game {
             }
 
             // ===== 固定步长模拟（世界逻辑，60Hz 节拍）=====
-            // 宇宙会话先于场景 tick：无论玩家在地表还是宇宙，三体模拟按同一节拍推进
+            // 双会话先于场景 tick：无论玩家在地表还是宇宙，三体模拟与地表模拟
+            // 按同一节拍推进（GDD D5：宇宙视角时地表继续运行）
             simAccumulator += frameTime;
             int steps = 0;
             while (simAccumulator >= FIXED_DT && steps < MAX_FIXED_STEPS) {
                 cosmos.tick(FIXED_DT);
+                surface.tick(FIXED_DT);
                 scene.update(FIXED_DT);
                 simAccumulator -= FIXED_DT;
                 steps++;
