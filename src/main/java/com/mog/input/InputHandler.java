@@ -132,6 +132,18 @@ public class InputHandler {
         return mouseY;
     }
 
+    // ===== 窗口尺寸委托（场景拾取换算用，避免场景持有 Window 引用）=====
+
+    /** 窗口逻辑宽度（鼠标坐标同系）。 */
+    public int getWindowWidth() {
+        return window.getWidth();
+    }
+
+    /** 窗口逻辑高度。 */
+    public int getWindowHeight() {
+        return window.getHeight();
+    }
+
     /** 本帧鼠标 X 位移（像素，右为正）。 */
     public double getDeltaX() {
         return deltaX;

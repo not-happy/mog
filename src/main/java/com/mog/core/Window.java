@@ -166,6 +166,16 @@ public class Window {
         return handle;
     }
 
+    /** 窗口逻辑宽度（GLFW 坐标系，鼠标坐标同系；高分屏上可能 != framebuffer 宽）。 */
+    public int getWidth() {
+        return width;
+    }
+
+    /** 窗口逻辑高度。 */
+    public int getHeight() {
+        return height;
+    }
+
     public int getFbWidth() {
         return fbWidth;
     }
