@@ -28,6 +28,10 @@ import static org.lwjgl.system.MemoryUtil.*;
  *   4. 绑定 VAO/shader（结束解绑）
  *
  * 顶点格式复用 line.vert/line.frag：pos(3f) + color(4f)，每格一段、逐段贴地形高度。
+ *
+ * C3 光标高亮：独立 DYNAMIC 小 VBO（1 格边框 4 段线 8 顶点），照 TrailRenderer
+ * 预分配 + 变化时 glBufferSubData 模式；脏检查——格与可放置性均未变时零 GL 调用。
+ * 高亮线抬 0.06m（> 格线 0.03m > 地形），防 z-fighting。
  */
 public class GridRenderer {
 
@@ -42,6 +46,18 @@ public class GridRenderer {
     private static final float ALPHA_MAJOR = 0.56f;
     /** 网格线抬离地形的高度（米）：防与地形 z-fighting */
     private static final float Y_OFFSET = 0.03f;
+    /** 光标高亮线抬离地形的高度（米）：高于格线一档 */
+    private static final float HL_Y_OFFSET = 0.06f;
+    /** 高亮颜色：可放置=绿 / 不可放置=红 */
+    private static final float HL_OK_R = 0.3f;
+    private static final float HL_OK_G = 1.0f;
+    private static final float HL_OK_B = 0.4f;
+    private static final float HL_NO_R = 1.0f;
+    private static final float HL_NO_G = 0.35f;
+    private static final float HL_NO_B = 0.3f;
+    private static final float HL_ALPHA = 0.9f;
+    /** 高亮边框顶点数：1 格 4 段线 */
+    private static final int HL_VERTICES = 8;
 
     private final int cells;
     private final float cellSize;
@@ -53,6 +69,16 @@ public class GridRenderer {
     private int vbo;
     private int vertexCount;
     private final Matrix4f tmpView = new Matrix4f();
+
+    // ===== 光标高亮（动态小 VBO）=====
+    private int hlVao;
+    private int hlVbo;
+    private FloatBuffer hlBuffer;
+    private boolean hlVisible;
+    private boolean hlDirty;
+    private int hlCellX = -1;
+    private int hlCellZ = -1;
+    private boolean hlOk;
 
     public GridRenderer(int cells, float cellSize, float heightScale, long seed) {
         this.cells = cells;
@@ -101,6 +127,65 @@ public class GridRenderer {
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         memFree(buf);
+
+        // 光标高亮：常驻缓冲 + 预分配 DYNAMIC 小 VBO（照 TrailRenderer 模式）
+        hlBuffer = memAllocFloat(HL_VERTICES * FLOATS_PER_VERTEX);
+        hlVao = glGenVertexArrays();
+        hlVbo = glGenBuffers();
+        glBindVertexArray(hlVao);
+        glBindBuffer(GL_ARRAY_BUFFER, hlVbo);
+        glBufferData(GL_ARRAY_BUFFER, (long) HL_VERTICES * FLOATS_PER_VERTEX * 4, GL_DYNAMIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 4, GL_FLOAT, false, stride, 12);
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    /**
+     * 设置光标高亮格（cellX < 0 隐藏）。脏检查：格与可放置性均未变时零分配零 GL 调用；
+     * 数据变化只重填常驻缓冲，真正上传推迟到 render()（glBufferSubData）。
+     */
+    public void setHighlight(int cellX, int cellZ, boolean ok) {
+        if (cellX < 0) {
+            hlVisible = false;
+            hlCellX = -1;
+            return;
+        }
+        if (hlVisible && cellX == hlCellX && cellZ == hlCellZ && ok == hlOk) {
+            return;
+        }
+        hlCellX = cellX;
+        hlCellZ = cellZ;
+        hlOk = ok;
+        hlVisible = true;
+        hlDirty = true;
+
+        float half = cells * cellSize / 2f;
+        float x0 = -half + cellX * cellSize;
+        float x1 = x0 + cellSize;
+        float z0 = -half + cellZ * cellSize;
+        float z1 = z0 + cellSize;
+        float r = ok ? HL_OK_R : HL_NO_R;
+        float g = ok ? HL_OK_G : HL_NO_G;
+        float b = ok ? HL_OK_B : HL_NO_B;
+        hlBuffer.clear();
+        putHighlightSegment(x0, z0, x1, z0, r, g, b);   // 南边
+        putHighlightSegment(x1, z0, x1, z1, r, g, b);   // 东边
+        putHighlightSegment(x1, z1, x0, z1, r, g, b);   // 北边
+        putHighlightSegment(x0, z1, x0, z0, r, g, b);   // 西边
+        hlBuffer.flip();
+    }
+
+    private void putHighlightSegment(float x0, float z0, float x1, float z1, float r, float g, float b) {
+        putHighlightVertex(x0, z0, r, g, b);
+        putHighlightVertex(x1, z1, r, g, b);
+    }
+
+    private void putHighlightVertex(float x, float z, float r, float g, float b) {
+        float y = TerrainBuilder.heightAt(x, z, heightScale, seed) + HL_Y_OFFSET;
+        hlBuffer.put(x).put(y).put(z).put(r).put(g).put(b).put(HL_ALPHA);
     }
 
     private void putVertex(FloatBuffer buf, float x, float z, float alpha) {
@@ -123,6 +208,20 @@ public class GridRenderer {
         glBindVertexArray(vao);
         glDrawArrays(GL_LINES, 0, vertexCount);
         glBindVertexArray(0);
+
+        // 光标高亮：同一状态块内追加一个 draw call；仅数据变化时上传
+        if (hlVisible) {
+            glBindVertexArray(hlVao);
+            glBindBuffer(GL_ARRAY_BUFFER, hlVbo);
+            if (hlDirty) {
+                glBufferSubData(GL_ARRAY_BUFFER, 0, hlBuffer);
+                hlDirty = false;
+            }
+            glDrawArrays(GL_LINES, 0, HL_VERTICES);
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
         shader.unbind();
 
         glEnable(GL_CULL_FACE);
@@ -142,5 +241,18 @@ public class GridRenderer {
             glDeleteBuffers(vbo);
             vbo = 0;
         }
+        if (hlVao != 0) {
+            glDeleteVertexArrays(hlVao);
+            hlVao = 0;
+        }
+        if (hlVbo != 0) {
+            glDeleteBuffers(hlVbo);
+            hlVbo = 0;
+        }
+        if (hlBuffer != null) {
+            memFree(hlBuffer);
+            hlBuffer = null;
+        }
+        hlVisible = false;
     }
 }

@@ -2,6 +2,8 @@ package com.mog.core;
 
 import com.mog.asset.AssetManager;
 import com.mog.audio.AudioEngine;
+import com.mog.core.event.BuildingPlacedEvent;
+import com.mog.core.event.BuildingRemovedEvent;
 import com.mog.core.event.CollisionEvent;
 import com.mog.core.event.EpochChangedEvent;
 import com.mog.core.event.EventBus;
@@ -114,7 +116,10 @@ public class Game {
             // /历法(年第日)/宿主星与易天/操作提示(空格转轮)/地表准星与切换/初始化省略号
             + "曜期三家失深已【】乐章终结坠焚·毁灭算冰封远航恒弹射宿主易天次年第日格转轮准星切换…"
             // C2 地表场景操作提示：WASD 平移 / 中键拖拽 / 右键旋转（键已在"左键拾取"烘焙）
-            + "移平右";
+            + "移平右"
+            // C3 建造文案：HUD(建筑/格坐标/已建) / 提示行(放置拆除·数字键选择)
+            // /建筑名(指挥中枢 晶眠舱 采集站 天文台 列算阵)（天/文/算/数/格/坐/标/已 均已有）
+            + "建筑拆除置字挥枢晶眠舱采集站台列阵择指";
 
     public void start(String[] args) {
         List<String> argList = args != null ? Arrays.asList(args) : List.of();
@@ -286,6 +291,16 @@ public class Game {
         });
         // 纪元变更 -> 提示音（日志由 CosmosSession 记录）
         eventBus.subscribe(EpochChangedEvent.class, e -> audio.playBlip());
+        // 建筑放置/拆除 -> 提示音 + 日志（场景只发不订，订阅一律集中在此）
+        eventBus.subscribe(BuildingPlacedEvent.class, e -> {
+            log.info("建造: {} 落位 格({},{}) 足迹 {}x{}",
+                    e.typeName(), e.cellX(), e.cellZ(), e.footW(), e.footD());
+            audio.playBlip();
+        });
+        eventBus.subscribe(BuildingRemovedEvent.class, e -> {
+            log.info("拆除: {} 格({},{})", e.typeName(), e.cellX(), e.cellZ());
+            audio.playBlip();
+        });
     }
 
     private void loop() {
