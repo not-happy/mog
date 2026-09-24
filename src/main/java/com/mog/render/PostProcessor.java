@@ -38,6 +38,18 @@ public class PostProcessor {
     /** 曝光（HDR 亮度总闸）：整体偏亮调低、偏暗调高，1.0 = 标准 */
     private static final float EXPOSURE = 1.0f;
 
+    // ===== 纪元色调分级（GDD D7）：显示空间末端的整体色调乘法 =====
+    // 由 Game/场景经 setTint 驱动；参数是 Game 级全局态，场景切换时集中复位为无色调。
+    private static final org.joml.Vector3f IDENTITY_TINT = new org.joml.Vector3f(1f, 1f, 1f);
+    private final org.joml.Vector3f tintColor = new org.joml.Vector3f(1f, 1f, 1f);
+    private float tintStrength = 0f;
+
+    /** 设置整体色调分级（strength=0 无效果；1 = 完全染色）。 */
+    public void setTint(float r, float g, float b, float strength) {
+        tintColor.set(r, g, b);
+        tintStrength = Math.max(0f, Math.min(1f, strength));
+    }
+
     private FrameBuffer sceneFbo;
     private FrameBuffer brightFbo;
     private final FrameBuffer[] pingPongFbo = new FrameBuffer[2];
@@ -144,14 +156,18 @@ public class PostProcessor {
             compositeShader.setUniform("vignetteStrength", VIGNETTE_STRENGTH);
             compositeShader.setUniform("saturation", SATURATION);
             compositeShader.setUniform("exposure", EXPOSURE);
+            compositeShader.setUniform("tintColor", tintColor);
+            compositeShader.setUniform("tintStrength", tintStrength);
         } else {
-            // 直通模式：全黑泛光 + 无暗角 + 原饱和度 + 标准曝光
+            // 直通模式：全黑泛光 + 无暗角 + 原饱和度 + 标准曝光 + 无色调
             bindTexture(GL_TEXTURE1, pingPongFbo[0].getColorTexture());
             compositeShader.setUniform("bloomTexture", 1);
             compositeShader.setUniform("bloomStrength", 0.0f);
             compositeShader.setUniform("vignetteStrength", 0.0f);
             compositeShader.setUniform("saturation", 1.0f);
             compositeShader.setUniform("exposure", 1.0f);
+            compositeShader.setUniform("tintColor", IDENTITY_TINT);
+            compositeShader.setUniform("tintStrength", 0.0f);
         }
         quad.render();
         compositeShader.unbind();

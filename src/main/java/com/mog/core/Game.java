@@ -384,6 +384,10 @@ public class Game {
         currentSlot = next;
         scene = createScene(next);
         scene.init();
+        // 渲染全局态复位集中在切换点（色调分级/阴影正交参数都是 Game 级状态，
+        // 场景不各自为政；地表场景接入后在此按槽位设置专属参数）
+        post.setTint(1f, 1f, 1f, 0f);
+        renderer.setShadowParams(25f, 18f, 1f, 60f);
         window.setMouseCaptured(scene.wantsMouseCapture());
         input.resetMouse();
     }

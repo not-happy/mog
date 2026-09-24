@@ -55,12 +55,22 @@ public class Renderer {
     }
 
     // ===== 阴影正交相机参数：覆盖场景范围的立方体视锥 =====
+    // 默认值对应宇宙/演示场（场景主体 ±10）；地表场景经 setShadowParams 放大到 64m 网格范围。
+    // 参数是 Game 级全局态——场景切换时由 Game.switchScene 集中复位，场景不各自为政。
     /** 光源位置距场景中心的距离 */
-    private static final float SHADOW_LIGHT_DISTANCE = 25f;
-    /** 正交视锥半宽（场景主体在 ±10 内，留出余量） */
-    private static final float SHADOW_EXTENT = 18f;
-    private static final float SHADOW_NEAR = 1f;
-    private static final float SHADOW_FAR = 60f;
+    private float shadowLightDistance = 25f;
+    /** 正交视锥半宽 */
+    private float shadowExtent = 18f;
+    private float shadowNear = 1f;
+    private float shadowFar = 60f;
+
+    /** 阴影正交相机参数（默认 25/18/1/60 = 旧硬编码值，调用方不改则视觉无差）。 */
+    public void setShadowParams(float lightDistance, float extent, float near, float far) {
+        this.shadowLightDistance = lightDistance;
+        this.shadowExtent = extent;
+        this.shadowNear = near;
+        this.shadowFar = far;
+    }
 
     private final Matrix4f projectionMatrix = new Matrix4f();
     private final Matrix4f viewMatrix = new Matrix4f();
@@ -148,9 +158,9 @@ public class Renderer {
 
     /** 光空间矩阵 = 正交投影 × 光源视图（光放在传播方向反方向、俯视场景中心）。 */
     private void updateLightSpaceMatrix(Light light) {
-        lightEye.set(light.getDirection()).normalize().mul(-SHADOW_LIGHT_DISTANCE);
-        lightProj.setOrtho(-SHADOW_EXTENT, SHADOW_EXTENT, -SHADOW_EXTENT, SHADOW_EXTENT,
-                SHADOW_NEAR, SHADOW_FAR);
+        lightEye.set(light.getDirection()).normalize().mul(-shadowLightDistance);
+        lightProj.setOrtho(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent,
+                shadowNear, shadowFar);
         lightView.setLookAt(lightEye.x, lightEye.y, lightEye.z,
                 0, 0, 0,
                 0, 1, 0);
