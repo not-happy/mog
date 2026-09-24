@@ -7,8 +7,9 @@
 游戏层（《曜纪》，设计文档见 [docs/GDD-曜纪.md](docs/GDD-曜纪.md)）：
 - **C1 星系模拟核心 ✅**：三体积分器（种子驱动 Kozai 互倾三重星）、纪元分类、宇宙视角场景（HDR 辉光/运动拖尾/时间控制）、Monte-Carlo 平衡工具
 - **C2 地表场景骨架 ✅**：45° RTS 相机、32×32 建造网格地形、纪元驱动的太阳方向光与色调分级（GDD D5/D7）
+- **C3 建造核心·最小闭环 ✅**：建筑类型表（5 种）、占位网格、鼠标拾取放置/拆除（左键放置、Shift+左键拆除、数字键 1-5 选型）、网格光标高亮、建造事件（场景只发、Game 订阅）
 - 三体模拟为 Game 级持久会话（`CosmosSession`）：Tab 切换 地表↔宇宙，模拟不中断——"宇宙视角看到的三星之舞，就是地表经历的天气"
-- C3 建造核心的接口预留见 [docs/C3接口清单.md](docs/C3接口清单.md)
+- C3 余项（资源节点/采集者寻路/生产链）未动，接口预留见 [docs/C3接口清单.md](docs/C3接口清单.md)
 
 ## 操作方式
 
@@ -31,6 +32,9 @@
 | 滚轮 | 缩放（相机高度 8~80m） |
 | 中键拖拽 | 平移焦点 |
 | 右键拖拽 / `Q` `E` | 旋转偏航（俯角固定 45°） |
+| 左键 | 放置建筑（绿高亮=可放，红=不可） |
+| `Shift`+左键 | 拆除建筑（多格足迹点任一覆盖格均可） |
+| 数字键 `1`-`5` | 选择建筑：指挥中枢/晶眠舱/采集站/天文台/列算阵 |
 | `空格` / `+` `-` | 暂停 / 倍速×2 / 倍速×0.5（作用于共享的宇宙会话） |
 
 **宇宙场景**（轨道观察视角）：
@@ -118,11 +122,12 @@ src/main/java/com/mog/
 │   ├── World.java         # 稀疏集组件仓库 + 64位签名 view 查询 + 系统调度
 │   ├── components/        # Transform/Parent/WorldMatrix/Mesh/Material/PbrMaterial/
 │   │                      #   Texture/PointLight/Spin/Orbit/Collider/WorldAabb/
-│   │                      #   Animation/BoneMatrices/Emitter
+│   │                      #   Animation/BoneMatrices/Emitter/Building
 │   └── systems/           # Spin/Orbit/Animation/Transform(场景图)/Collision
-├── physics/               # 碰撞几何
+├── physics/               # 碰撞几何 + 屏幕拾取
 │   ├── Aabb.java          # 轴对齐包围盒（分离定理相交测试）
-│   └── Ray.java           # 射线（slab 法射线-AABB 求交）
+│   ├── Ray.java           # 射线（slab 法射线-AABB 求交）
+│   └── ScreenPicker.java  # 静态工具：窗口坐标→NDC→逆 projView 射线→水平面求交（C3 建造拾取）
 ├── input/
 │   └── InputHandler.java  # 轮询式键鼠状态 + 边沿检测 + 鼠标增量
 ├── astro/                 # 星系模拟（纯 Java，零 GL/ECS 依赖，《曜纪》C1）
@@ -168,10 +173,12 @@ src/main/java/com/mog/
     ├── CosmosSession.java # 三体模拟会话（Game 级持久唯一真源：模拟/纪元/拖尾缓冲/时间控制）
     ├── CosmosScene.java   # 宇宙场景：轨道线球体 + 拖尾 + 会话视图
     ├── CosmosViewSystem.java # 会话 -> ECS 视图同步（薄壳系统，仅注册进宇宙 World）
-    ├── SurfaceScene.java  # 地表场景（C2 骨架）：网格地形 + 占位建筑 + 纪元氛围
+    ├── SurfaceScene.java  # 地表场景（C3 建造闭环）：网格地形 + 放置/拆除 + 纪元氛围
     ├── SurfaceSky.java    # 静态工具：三体模拟 -> 地表太阳方向/颜色/强度
     ├── EpochPalette.java  # 静态调色板：7 纪元 -> 阳光色/色调分级参数（GDD D7）
     ├── BuildGrid.java     # 静态工具：32×32 建造网格换算（worldToCell/cellToWorld/snap）
+    ├── BuildingType.java  # 建筑类型静态表（5 种：显示名/足迹/尺寸/颜色，成本字段预留不扣）
+    ├── OccupancyGrid.java # 占位网格（entityId+1 偏移存储，canPlace/place/clear/entityAt）
     ├── TerrainBuilder.java # 静态工具：种子化缓丘高度场 -> 地形网格 + heightAt 查询
     └── DemoScene.java     # 技术演示场（--demo）：A/B 阶段引擎能力展示
 ```
@@ -258,7 +265,7 @@ Game.loop 每帧 →  cosmos.tick(FIXED_DT)（固定步长，先于场景——�
 |---|---|---|
 | C1 | 星系模拟核心：三体积分器/纪元分类/宇宙视角场景 | ✅（含 S1 测量工具、S2 玩法层事件链） |
 | C2 | 地表场景骨架：45° RTS 相机/建造网格地形/纪元氛围 | ✅（骨架完成；无缝缩放过渡未做，现为 Tab 硬切换） |
-| C3 | 建造核心：网格放置/拆除、资源节点、采集者寻路、生产链 | ⏳ 接口预留见 [docs/C3接口清单.md](docs/C3接口清单.md) |
+| C3 | 建造核心：网格放置/拆除、资源节点、采集者寻路、生产链 | 🔶 最小闭环 ✅（建筑表/占位网格/拾取放置拆除/光标高亮/建造事件）；资源节点、寻路、生产链未动 |
 | C4+ | 人口气候 / UI 控件库 / 研究成就 / 终局流程 | 未开始 |
 
 ## 资源目录
