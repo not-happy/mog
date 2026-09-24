@@ -170,6 +170,18 @@ public class CosmosScene implements Scene {
         return cameraRig;
     }
 
+    // ===== 能力声明（拖拽操作不锁光标；提示行走统一样式）=====
+
+    @Override
+    public boolean wantsMouseCapture() {
+        return false;
+    }
+
+    @Override
+    public List<String> getHintLines() {
+        return List.of("F5 后处理   F6 音乐   Tab: 返回地表视角");
+    }
+
     @Override
     public void cleanup() {
         // 只释放视图资源——会话（模拟/拖尾历史/乐章状态）跨场景存活，绝不能碰

@@ -49,8 +49,9 @@ import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
  *   pollEvents -> input -> 场景热键 -> 固定步长模拟(60Hz) -> 相机装备(帧步长)
  *   -> render(阴影遍/场景遍/场景overlay/粒子) -> 后处理 -> HUD -> swapBuffers
  *
- * 场景：Tab 在地表（DemoScene）与宇宙（CosmosScene）间切换；
- * 启动参数 --cosmos 直接进入宇宙场景。
+ * 场景：Tab 在地表与宇宙（CosmosScene）间切换；场景差异全部走 Scene 能力方法，
+ * 这里不允许 instanceof 具体场景类。
+ * 启动参数：--cosmos 直接进宇宙 / --demo 进技术演示场 / --speed=N 宇宙会话初始倍速。
  */
 public class Game {
 
@@ -78,7 +79,10 @@ public class Game {
     private Environment environment;
     private ShaderSet shaders;
     private Scene scene;
-    private boolean startInCosmos;
+    /** 场景槽位：Tab 只在 SURFACE <-> COSMOS 间切换；DEMO 仅经 --demo 进入、Tab 离开后不再回来 */
+    private enum SceneSlot { SURFACE, COSMOS, DEMO }
+    private SceneSlot currentSlot;
+    private SceneSlot startSlot = SceneSlot.SURFACE;
     /** 调试加速：--speed=N 写入宇宙会话的初始倍速（0 = 用会话默认 0.5） */
     private double cosmosSpeed;
     /** 文本 HUD（系统字体不可用时为 null，自动降级） */
@@ -109,7 +113,10 @@ public class Game {
             + "曜期三家失深已【】乐章终结坠焚·毁灭算冰封远航恒弹射宿主易天次年第日格转轮准星切换…";
 
     public void start(String[] args) {
-        startInCosmos = args != null && Arrays.asList(args).contains("--cosmos");
+        List<String> argList = args != null ? Arrays.asList(args) : List.of();
+        startSlot = argList.contains("--cosmos") ? SceneSlot.COSMOS
+                : argList.contains("--demo") ? SceneSlot.DEMO
+                : SceneSlot.SURFACE;
         cosmosSpeed = parseSpeedArg(args);
         log.info("===== mog-engine 启动 =====");
         try {
@@ -181,7 +188,8 @@ public class Game {
             cosmos.setSpeed(cosmosSpeed);
             log.info("调试加速: 宇宙会话初始倍速 x{} (--speed)", cosmos.getSpeed());
         }
-        scene = startInCosmos ? new CosmosScene(cosmos) : new DemoScene(assets, eventBus);
+        currentSlot = startSlot;
+        scene = createScene(currentSlot);
         scene.init();
 
         // IBL 环境光照：程序化天空 -> 辐照度/预滤波/BRDF LUT
@@ -199,9 +207,17 @@ public class Game {
 
         audio.init(); // 无音频设备时自动降级为哑模式
 
-        window.setMouseCaptured(!(scene instanceof CosmosScene)); // 宇宙场景用拖拽，不锁光标
+        window.setMouseCaptured(scene.wantsMouseCapture());
 
         wireEvents();
+    }
+
+    /** 场景工厂：槽位 -> 场景实例。SURFACE 暂由 DemoScene 顶替（C2 地表场景接入后替换）。 */
+    private Scene createScene(SceneSlot slot) {
+        return switch (slot) {
+            case COSMOS -> new CosmosScene(cosmos);
+            case SURFACE, DEMO -> new DemoScene(assets, eventBus);
+        };
     }
 
     /** 组合根：注册各类资产的加载/释放策略。 */
@@ -274,7 +290,7 @@ public class Game {
             input.update();
             handleHotkeys();
             scene.handleInput(input);
-            if (scene instanceof DemoScene) {
+            if (scene.usesCrosshairPicking()) {
                 handlePicking();
             }
 
@@ -346,11 +362,11 @@ public class Game {
         if (input.isKeyJustPressed(GLFW_KEY_F6)) {
             audio.toggleMusic();
         }
-        if (input.isKeyJustPressed(GLFW_KEY_F9) && scene instanceof DemoScene) {
+        if (input.isKeyJustPressed(GLFW_KEY_F9) && scene.supportsSaveLoad()) {
             saveManager.save(scene.getWorld(), scene.getCamera());
             audio.playBlip();
         }
-        if (input.isKeyJustPressed(GLFW_KEY_F10) && scene instanceof DemoScene) {
+        if (input.isKeyJustPressed(GLFW_KEY_F10) && scene.supportsSaveLoad()) {
             saveManager.load(scene.getWorld(), scene.getCamera());
             audio.playBlip();
         }
@@ -359,14 +375,16 @@ public class Game {
         }
     }
 
-    /** 地表 <-> 宇宙场景切换（旧场景释放资源，新场景重建；宇宙会话跨切换持久）。 */
+    /** 场景切换：Tab 只在 地表 <-> 宇宙 间往返（DEMO 离开后经 Tab 落到地表槽）。
+     *  旧场景释放资源，新场景重建；宇宙会话跨切换持久。 */
     private void switchScene() {
-        boolean toCosmos = !(scene instanceof CosmosScene);
-        log.info("切换场景 -> {}", toCosmos ? "宇宙视角" : "地表视角");
+        SceneSlot next = currentSlot == SceneSlot.COSMOS ? SceneSlot.SURFACE : SceneSlot.COSMOS;
+        log.info("切换场景 -> {}", next == SceneSlot.COSMOS ? "宇宙视角" : "地表视角");
         scene.cleanup();
-        scene = toCosmos ? new CosmosScene(cosmos) : new DemoScene(assets, eventBus);
+        currentSlot = next;
+        scene = createScene(next);
         scene.init();
-        window.setMouseCaptured(!toCosmos); // 宇宙场景拖拽操作，不锁光标
+        window.setMouseCaptured(scene.wantsMouseCapture());
         input.resetMouse();
     }
 
@@ -413,19 +431,19 @@ public class Game {
             text.drawText(16, y, s, 1f, 0.85f, 0.92f, 0.8f, 0.92f);
             y += line;
         }
-        if (scene instanceof DemoScene) {
-            text.drawText(16, y, "F1 鼠标捕获   F3 输入调试   F5 后处理   F6 音乐   F9 存档   F10 读档",
-                    1f, 1f, 1f, 1f, 0.55f);
+        for (String s : scene.getHintLines()) {
+            text.drawText(16, y, s, 1f, 1f, 1f, 1f, 0.55f);
             y += line;
-            text.drawText(16, y, "左键: 准星拾取   选中: " + (pickedName != null ? pickedName : "无")
-                            + "   Tab: 切换宇宙视角",
+        }
+        if (scene.usesCrosshairPicking()) {
+            text.drawText(16, y, "选中: " + (pickedName != null ? pickedName : "无"),
                     1f, 1f, 0.95f, 0.5f, 0.92f);
+            y += line;
+        }
+        if (scene.drawsCrosshair()) {
             // 屏幕中心准星
             text.drawText(window.getFbWidth() / 2f - 5, window.getFbHeight() / 2f + 8, "+",
                     1f, 1f, 1f, 1f, 0.7f);
-        } else {
-            text.drawText(16, y, "F5 后处理   F6 音乐   Tab: 返回地表视角",
-                    1f, 1f, 1f, 1f, 0.55f);
         }
         text.end();
 

@@ -12,7 +12,9 @@ import java.util.List;
 
 /**
  * 场景接口：一个可被 Game 装载/切换的完整游戏场景。
- * Game 通过 Tab 在地表场景（DemoScene）与宇宙场景（CosmosScene）间切换。
+ * Game 通过 Tab 在地表与宇宙场景间切换；场景差异一律通过下面的能力方法
+ * （wantsMouseCapture / usesCrosshairPicking / supportsSaveLoad / getHintLines /
+ * drawsCrosshair）向 Game 声明——Game 里不允许出现 instanceof 具体场景类。
  */
 public interface Scene {
 
@@ -49,6 +51,33 @@ public interface Scene {
     /** 粒子引擎（场景遍内渲染用）；无粒子的场景返回 null。 */
     default ParticleEngine getParticleEngine() {
         return null;
+    }
+
+    // ===== 能力声明（Game 据此装配输入/HUD/热键，取代 instanceof 判断）=====
+
+    /** 进入本场景时是否锁定光标（FPS 漫游 true；拖拽操作的宇宙/RTS 场景 false）。 */
+    default boolean wantsMouseCapture() {
+        return true;
+    }
+
+    /** 是否启用准星拾取（左键从屏幕中心发射线选碰撞体）。 */
+    default boolean usesCrosshairPicking() {
+        return false;
+    }
+
+    /** 是否支持 F9/F10 存档读档。 */
+    default boolean supportsSaveLoad() {
+        return false;
+    }
+
+    /** 屏幕底部操作提示行（静态文案；动态状态走 getHudLines）。 */
+    default List<String> getHintLines() {
+        return List.of();
+    }
+
+    /** 是否在屏幕中心画准星"+"。 */
+    default boolean drawsCrosshair() {
+        return false;
     }
 
     /** 释放场景持有的资源（GL 资源必须在上下文销毁前调用）。 */

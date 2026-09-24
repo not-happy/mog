@@ -397,6 +397,30 @@ public class DemoScene implements Scene {
                 String.format("相机坐标: (%.1f, %.1f, %.1f)", cam.x, cam.y, cam.z));
     }
 
+    // ===== 能力声明（技术演示场：FPS 漫游 + 准星拾取 + 存读档全开）=====
+
+    @Override
+    public boolean usesCrosshairPicking() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsSaveLoad() {
+        return true;
+    }
+
+    @Override
+    public boolean drawsCrosshair() {
+        return true;
+    }
+
+    @Override
+    public java.util.List<String> getHintLines() {
+        return java.util.List.of(
+                "F1 鼠标捕获   F3 输入调试   F5 后处理   F6 音乐   F9 存档   F10 读档",
+                "左键: 准星拾取   Tab: 切换宇宙视角");
+    }
+
     @Override
     public Camera getCamera() {
         return camera;
