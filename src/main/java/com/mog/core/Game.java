@@ -95,9 +95,14 @@ public class Game {
     private String pickedName;
 
     /** HUD 用到的 CJK 字符（烘焙进字体图集；ASCII 自动包含） */
+    /** HUD 文案用到的全部 CJK 字符。字体图集为静态烘焙：改 HUD 文案必须同步补字符，
+     *  否则 TextRenderer 以空白占位（缺字会 WARN 一次提醒）。 */
     private static final String HUD_CJK_CHARS =
             "帧率固定步长实体资产缓存后处理开关鼠标捕获输入调试退出相机坐标音乐存档读选中左键拾取无"
-            + "宇宙场景纪元温度指数模拟时间倍速种子暂停旋滚缩放返回地表拖拽初始化烈寒掠序乱凌空视角文明历";
+            + "宇宙场景纪元温度指数模拟时间倍速种子暂停旋滚缩放返回地表拖拽初始化烈寒掠序乱凌空视角文明历"
+            // S2 玩法层文案：纪元名(曜期/三家深空)/终局字幕(【】乐章终结·坠焚毁灭算冰封远航恒弹射)
+            // /历法(年第日)/宿主星与易天/操作提示(空格转轮)/地表准星与切换/初始化省略号
+            + "曜期三家失深已【】乐章终结坠焚·毁灭算冰封远航恒弹射宿主易天次年第日格转轮准星切换…";
 
     public void start(String[] args) {
         startInCosmos = args != null && Arrays.asList(args).contains("--cosmos");

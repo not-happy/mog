@@ -150,17 +150,19 @@ public class CosmosScene implements Scene {
         String epochName = epoch != null ? epoch.type().getDisplayName() : "初始化…";
         double temp = epoch != null ? epoch.temperature() : 0;
         var ht = simSystem.getHostTracker();
-        String endingMark = simSystem.isRunEnded()
-                ? "   【乐章终结: " + simSystem.getEnding().getDisplayName() + "】"
-                : "";
-        return List.of(
-                String.format("纪元: %s   温度指数: %.3f   %s%s", epochName, temp,
-                        simSystem.isPaused() ? "[已暂停]" : "", endingMark),
-                String.format("文明历: %s   宿主星: 曜%d   易天: %d 次   倍速: x%.2f",
-                        GameCalendar.format(sim.getTime()), ht.getHost() + 1,
-                        ht.getSwitchCount(), simSystem.getSpeed()),
-                String.format("种子: %d   空格 暂停   +/- 倍速   左键拖拽 旋转   滚轮 缩放   Tab 返回地表",
-                        sim.getSeed()));
+        List<String> lines = new ArrayList<>(4);
+        if (simSystem.isRunEnded()) {
+            // 终局字幕独立一行置顶——乐章落幕是最重要的一刻，不混在状态行里
+            lines.add("【乐章终结: " + simSystem.getEnding().getDisplayName() + "】");
+        }
+        lines.add(String.format("纪元: %s   温度指数: %.3f   %s", epochName, temp,
+                simSystem.isPaused() ? "[已暂停]" : ""));
+        lines.add(String.format("文明历: %s   宿主星: 曜%d   易天: %d 次   倍速: x%.2f",
+                GameCalendar.format(sim.getTime()), ht.getHost() + 1,
+                ht.getSwitchCount(), simSystem.getSpeed()));
+        lines.add(String.format("种子: %d   空格 暂停   +/- 倍速   左键拖拽 旋转   滚轮 缩放   Tab 返回地表",
+                sim.getSeed()));
+        return lines;
     }
 
     @Override

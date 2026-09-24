@@ -2,8 +2,12 @@ package com.mog.ui;
 
 import com.mog.render.Shader;
 import org.joml.Matrix4f;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.FloatBuffer;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL13.GL_TEXTURE0;
@@ -23,10 +27,15 @@ import static org.lwjgl.system.MemoryUtil.*;
  */
 public class TextRenderer {
 
+    private static final Logger log = LoggerFactory.getLogger(TextRenderer.class);
+
     /** 顶点格式：pos(2f) + uv(2f) + color(4f) */
     private static final int FLOATS_PER_VERTEX = 8;
     private static final int MAX_QUADS = 2048;
     private static final int MAX_VERTICES = MAX_QUADS * 6;
+
+    /** 已报告过的缺字码点（每字符只 WARN 一次，防刷屏） */
+    private final Set<Integer> warnedMissing = new HashSet<>();
 
     private final FontAtlas font;
     private final Shader shader;
@@ -90,6 +99,11 @@ public class TextRenderer {
             i += Character.charCount(cp);
             FontAtlas.Glyph glyph = font.getGlyph(cp);
             if (glyph == null) {
+                if (warnedMissing.add(cp)) {
+                    log.warn("字符 '{}' (U+{}) 未烘焙进字体图集，以空白占位——请补进 Game.HUD_CJK_CHARS",
+                            new String(Character.toChars(cp)),
+                            Integer.toHexString(cp).toUpperCase());
+                }
                 penX += 8f * scale; // 未烘焙字符：占位前进
                 continue;
             }
