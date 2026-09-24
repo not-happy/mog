@@ -3,7 +3,7 @@ package com.mog.core.event;
 import com.mog.astro.EndingType;
 
 /**
- * 乐章终结事件：首个终局事件成立时由 CosmosSimSystem 发布并冻结物理步进。
+ * 乐章终结事件：首个终局事件成立时由 CosmosSession 发布并冻结物理步进。
  *
  * 后续接入点（S3 演出层 / 结算流程）：
  *   PLANET_SCORCHED / PLANET_LOST -> 毁灭结算（传承点 -> 星海轮回新种子重开）

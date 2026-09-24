@@ -3,6 +3,7 @@ package com.mog.game;
 import com.mog.astro.EndingType;
 import com.mog.astro.Epoch;
 import com.mog.astro.EpochClassifier;
+import com.mog.astro.EpochType;
 import com.mog.astro.FateJudge;
 import com.mog.astro.GameCalendar;
 import com.mog.astro.GravitySimulation;
@@ -11,32 +12,30 @@ import com.mog.core.event.EpochChangedEvent;
 import com.mog.core.event.EventBus;
 import com.mog.core.event.HostChangedEvent;
 import com.mog.core.event.RunEndedEvent;
-import com.mog.ecs.GameSystem;
-import com.mog.ecs.World;
-import com.mog.ecs.components.TransformComponent;
-import com.mog.render.TrailRenderer;
 import org.joml.Vector3d;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * 星系模拟系统：以固定子步长推进三体积分（倍速 = 每帧多步），
- * 同步天体实体 Transform、维护彗尾式运动拖尾环形缓冲、实时纪元分类并发布事件。
- *
- * 玩法层职责（S2）：逐步判定易天（HostTracker -> HostChangedEvent）
- * 与乐章终局（FateJudge -> RunEndedEvent，首个终局事件后冻结物理步进），
- * 口径与 ChaoticSpectrumTool 测量一致——玩家经历的分布 = 扫描测得的分布。
- *
- * 模拟与渲染解耦：本系统是 GameSystem（进 World 调度），
- * 残影顶点数组每帧重建后交给 TrailRenderer（渲染由场景在 overlay 阶段触发）。
- */
-public class CosmosSimSystem implements GameSystem {
+import java.util.Random;
 
-    private static final Logger log = LoggerFactory.getLogger(CosmosSimSystem.class);
+/**
+ * 宇宙会话（Game 级持久，跨场景唯一真源）：三体积分、纪元分类、易天/终局状态、
+ * 时间控制（暂停/倍速）与拖尾历史环形缓冲都在这里，生命周期与整局游戏一致。
+ *
+ * GDD D5 一致性铁律——"宇宙视角看到的三星之舞，就是地表经历的天气"：
+ * 玩家在地表时模拟照常推进（Game 固定步长循环里 tick），切回宇宙拖尾包含离场期间的历史。
+ *
+ * 纯 Java、零 GL/零 ECS 依赖：不引用 World、实体、TrailRenderer——
+ * 视图同步（实体 Transform、拖尾顶点组装）由 {@link CosmosViewSystem} 薄壳完成。
+ * 实体类不放逻辑的项目规则在这里同样成立：本类是会话/服务，不是实体。
+ */
+public final class CosmosSession {
+
+    private static final Logger log = LoggerFactory.getLogger(CosmosSession.class);
 
     /** 积分固定步长（模拟时间单位） */
     public static final double SIM_DT = 0.002;
-    /** 单帧最大子步数（防卡顿后的死亡螺旋）。
+    /** 单次 tick 最大子步数（防卡顿后的死亡螺旋）。
      *  也决定了倍速的有效上限：SIM_DT×800×60fps = 96 模拟单位/秒 ≈ 15 年/秒 */
     private static final int MAX_STEPS_PER_FRAME = 800;
     /** 倍速上限（调试加速用，正常游玩到不了这么高） */
@@ -50,7 +49,7 @@ public class CosmosSimSystem implements GameSystem {
     /** 天体拖尾颜色。恒星用 HDR 值（>1，与球体同色系）：头部亮度超过泛光提取阈值
      *  （PostProcessor 0.75 + 软膝），拖尾随球体一起发光——否则细线淹没在恒星自身光晕里。
      *  行星保持 SDR 暗色（不抢恒星的戏）。 */
-    private static final float[][] BODY_COLORS = {
+    public static final float[][] BODY_COLORS = {
             {2.00f, 1.70f, 1.10f},   // 曜一（金黄 HDR）
             {2.00f, 1.10f, 0.60f},   // 曜二（橙红 HDR）
             {1.30f, 1.50f, 2.00f},   // 曜三（蓝白 HDR）
@@ -60,19 +59,15 @@ public class CosmosSimSystem implements GameSystem {
     private final GravitySimulation sim;
     private final EpochClassifier classifier = new EpochClassifier();
     private final EventBus eventBus;
-    private final int[] starEntities;
-    private final int planetEntity;
-    private final TrailRenderer trails;
     /** 宿主星追踪（易天事件源；构造时采样 t=0 宿主与出生半径） */
     private final HostTracker hostTracker;
 
-    // 轨迹环形缓冲（SoA）
+    // 轨迹环形缓冲（SoA）：历史留在会话里，场景切换不丢
     private final float[][] ringX = new float[4][TRAIL_CAP];
     private final float[][] ringY = new float[4][TRAIL_CAP];
     private final float[][] ringZ = new float[4][TRAIL_CAP];
     private final int[] trailCount = new int[4];
     private final int[] trailHead = new int[4];
-    private final float[][] vertexScratch = new float[4][TRAIL_CAP * TrailRenderer.FLOATS_PER_VERTEX];
 
     private double stepAccum;
     private int stepCounter;
@@ -89,19 +84,25 @@ public class CosmosSimSystem implements GameSystem {
     private double speed = 0.5;
     private boolean paused;
 
-    public CosmosSimSystem(GravitySimulation sim, int[] starEntities, int planetEntity,
-                           TrailRenderer trails, EventBus eventBus) {
-        this.sim = sim;
-        this.starEntities = starEntities;
-        this.planetEntity = planetEntity;
-        this.trails = trails;
+    /** 正式开局：随机种子 = 一个全新乐章。 */
+    public CosmosSession(EventBus eventBus) {
+        this(eventBus, new Random().nextLong());
+    }
+
+    /** 指定种子开局（冒烟测试复现已知结局用）。 */
+    public CosmosSession(EventBus eventBus, long seed) {
         this.eventBus = eventBus;
+        this.sim = new GravitySimulation(seed);
         this.hostTracker = new HostTracker(sim);
     }
 
-    @Override
-    public void update(World world, float deltaTime) {
-        // ===== 1. 固定子步长推进积分（乐章终结后停步，场景冻结供终局演出）=====
+    /**
+     * 推进模拟（Game 固定步长循环每步调用一次，与场景无关——地表期间照常 tick）。
+     * 语义与原 CosmosSimSystem.update 的步骤 1/4 完全一致：倍速子步长积分、
+     * 逐步易天/终局判定、纪元分类与事件发布；局长标定不漂移。
+     */
+    public void tick(float deltaTime) {
+        // ===== 1. 固定子步长推进积分（乐章终结后停步，供终局演出冻结画面）=====
         if (!paused && !runEnded) {
             stepAccum += speed * deltaTime;
             int steps = (int) (stepAccum / SIM_DT);
@@ -120,44 +121,14 @@ public class CosmosSimSystem implements GameSystem {
             }
         }
 
-        // ===== 2. 同步天体实体 Transform（double -> float 渲染精度足够）=====
-        for (int i = 0; i < starEntities.length; i++) {
-            Vector3d p = sim.getStarPos(i);
-            TransformComponent t = world.getComponent(starEntities[i], TransformComponent.class);
-            t.getPosition().set((float) p.x, (float) p.y, (float) p.z);
-        }
-        Vector3d pp = sim.getPlanetPos();
-        world.getComponent(planetEntity, TransformComponent.class)
-                .getPosition().set((float) pp.x, (float) pp.y, (float) pp.z);
-
-        // ===== 3. 重建轨迹顶点（旧 -> 新，alpha 平方渐隐 = 彗尾式运动拖尾）=====
-        for (int b = 0; b < 4; b++) {
-            int n = trailCount[b];
-            float[] verts = vertexScratch[b];
-            int p = 0;
-            for (int k = 0; k < n; k++) {
-                int idx = (trailHead[b] - n + k + TRAIL_CAP * 2) % TRAIL_CAP;
-                float t = (k + 1) / (float) n;
-                float alpha = t * t * 0.9f;   // 头部亮、尾部快速消隐（加色混合下呈彗尾发光）
-                verts[p++] = ringX[b][idx];
-                verts[p++] = ringY[b][idx];
-                verts[p++] = ringZ[b][idx];
-                verts[p++] = BODY_COLORS[b][0];
-                verts[p++] = BODY_COLORS[b][1];
-                verts[p++] = BODY_COLORS[b][2];
-                verts[p++] = alpha;
-            }
-            trails.setTrail(b, verts, n);
-        }
-
-        // ===== 4. 纪元分类与事件 =====
+        // ===== 2. 纪元分类与事件 =====
         Epoch epoch = classifier.classify(sim);
         if (currentEpoch == null || epoch.type() != currentEpoch.type()) {
             eventBus.publish(new EpochChangedEvent(currentEpoch, epoch));
             log.info(String.format("纪元变更: %s -> %s (温度 %.3f, 最近曜 %.2f)",
                     currentEpoch != null ? currentEpoch.type().getDisplayName() : "(初始)",
                     epoch.type().getDisplayName(), epoch.temperature(), epoch.nearestDist()));
-            if (epoch.type() == com.mog.astro.EpochType.LOST) {
+            if (epoch.type() == EpochType.LOST) {
                 log.warn("母星漂入深空——『失家深空』预警：天空已全黑，"
                         + "距正式失家终局（FateJudge）仅剩漂流倒计时");
             }
@@ -219,7 +190,36 @@ public class CosmosSimSystem implements GameSystem {
         }
     }
 
-    // ===== 时间控制（场景 handleInput 调用）=====
+    // ===== 拖尾读取（视图层 CosmosViewSystem 组装顶点用）=====
+
+    /** 天体 b（0-2 恒星，3 行星）当前拖尾点数。 */
+    public int getTrailCount(int body) {
+        return trailCount[body];
+    }
+
+    /**
+     * 把天体拖尾展开为 TrailRenderer 顶点格式（旧 -> 新，每点 7 float：pos3+color3+alpha1），
+     * alpha 平方渐隐 = 彗尾式运动拖尾。dst 容量须 >= getTrailCount(body) * 7。
+     */
+    public void fillTrailVertices(int body, float[] dst) {
+        int n = trailCount[body];
+        float[] color = BODY_COLORS[body];
+        int p = 0;
+        for (int k = 0; k < n; k++) {
+            int idx = (trailHead[body] - n + k + TRAIL_CAP * 2) % TRAIL_CAP;
+            float t = (k + 1) / (float) n;
+            float alpha = t * t * 0.9f;   // 头部亮、尾部快速消隐（加色混合下呈彗尾发光）
+            dst[p++] = ringX[body][idx];
+            dst[p++] = ringY[body][idx];
+            dst[p++] = ringZ[body][idx];
+            dst[p++] = color[0];
+            dst[p++] = color[1];
+            dst[p++] = color[2];
+            dst[p++] = alpha;
+        }
+    }
+
+    // ===== 时间控制（场景 handleInput 调用；地表/宇宙共享同一会话）=====
 
     public void togglePause() {
         paused = !paused;
@@ -242,15 +242,15 @@ public class CosmosSimSystem implements GameSystem {
         return speed;
     }
 
-    public Epoch getCurrentEpoch() {
-        return currentEpoch;
-    }
+    // ===== 状态读取（HUD / 结算流程 / 地表天空读取）=====
 
     public GravitySimulation getSim() {
         return sim;
     }
 
-    // ===== 乐章状态（HUD / 结算流程读取）=====
+    public Epoch getCurrentEpoch() {
+        return currentEpoch;
+    }
 
     public HostTracker getHostTracker() {
         return hostTracker;

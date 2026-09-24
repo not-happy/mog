@@ -10,6 +10,7 @@ import com.mog.core.event.WindowResizedEvent;
 import com.mog.ecs.components.WorldAabbComponent;
 import com.mog.game.CameraRig;
 import com.mog.game.CosmosScene;
+import com.mog.game.CosmosSession;
 import com.mog.game.DemoScene;
 import com.mog.game.SaveManager;
 import com.mog.input.InputHandler;
@@ -65,6 +66,9 @@ public class Game {
     private final AssetManager assets = new AssetManager();
     private final AudioEngine audio = new AudioEngine();
     private final SaveManager saveManager = new SaveManager();
+    /** 宇宙会话（三体模拟唯一真源）：Game 级持久，固定步长循环里 tick——
+     *  地表期间模拟照常推进（GDD D5 一致性铁律），场景切换不重开局 */
+    private final CosmosSession cosmos = new CosmosSession(eventBus);
 
     private Window window;
     private Timer timer;
@@ -75,7 +79,7 @@ public class Game {
     private ShaderSet shaders;
     private Scene scene;
     private boolean startInCosmos;
-    /** 调试加速：--speed N 指定的宇宙场景初始倍速（0 = 用默认 1.25） */
+    /** 调试加速：--speed=N 写入宇宙会话的初始倍速（0 = 用会话默认 0.5） */
     private double cosmosSpeed;
     /** 文本 HUD（系统字体不可用时为 null，自动降级） */
     private FontAtlas font;
@@ -173,7 +177,11 @@ public class Game {
                 Shader.loadFromClasspath("/shaders/skinned_pbr.vert", "/shaders/pbr.frag"),
                 Shader.loadFromClasspath("/shaders/shadow_depth.vert", "/shaders/shadow_depth.frag"));
 
-        scene = startInCosmos ? new CosmosScene(eventBus, cosmosSpeed) : new DemoScene(assets, eventBus);
+        if (cosmosSpeed > 0) {
+            cosmos.setSpeed(cosmosSpeed);
+            log.info("调试加速: 宇宙会话初始倍速 x{} (--speed)", cosmos.getSpeed());
+        }
+        scene = startInCosmos ? new CosmosScene(cosmos) : new DemoScene(assets, eventBus);
         scene.init();
 
         // IBL 环境光照：程序化天空 -> 辐照度/预滤波/BRDF LUT
@@ -239,7 +247,7 @@ public class Game {
             log.info("碰撞: {} <-> {}", e.nameA(), e.nameB());
             audio.playBlip();
         });
-        // 纪元变更 -> 提示音（日志由 CosmosSimSystem 记录）
+        // 纪元变更 -> 提示音（日志由 CosmosSession 记录）
         eventBus.subscribe(EpochChangedEvent.class, e -> audio.playBlip());
     }
 
@@ -271,9 +279,11 @@ public class Game {
             }
 
             // ===== 固定步长模拟（世界逻辑，60Hz 节拍）=====
+            // 宇宙会话先于场景 tick：无论玩家在地表还是宇宙，三体模拟按同一节拍推进
             simAccumulator += frameTime;
             int steps = 0;
             while (simAccumulator >= FIXED_DT && steps < MAX_FIXED_STEPS) {
+                cosmos.tick(FIXED_DT);
                 scene.update(FIXED_DT);
                 simAccumulator -= FIXED_DT;
                 steps++;
@@ -349,12 +359,12 @@ public class Game {
         }
     }
 
-    /** 地表 <-> 宇宙场景切换（旧场景释放资源，新场景重建；资产缓存自动兜底）。 */
+    /** 地表 <-> 宇宙场景切换（旧场景释放资源，新场景重建；宇宙会话跨切换持久）。 */
     private void switchScene() {
         boolean toCosmos = !(scene instanceof CosmosScene);
         log.info("切换场景 -> {}", toCosmos ? "宇宙视角" : "地表视角");
         scene.cleanup();
-        scene = toCosmos ? new CosmosScene(eventBus, cosmosSpeed) : new DemoScene(assets, eventBus);
+        scene = toCosmos ? new CosmosScene(cosmos) : new DemoScene(assets, eventBus);
         scene.init();
         window.setMouseCaptured(!toCosmos); // 宇宙场景拖拽操作，不锁光标
         input.resetMouse();
