@@ -63,6 +63,8 @@ public class SpriteBatch {
         currentTexture = null;
 
         glDisable(GL_DEPTH_TEST);
+        // 同 TextRenderer：y 向下正交投影的精灵四边形是 NDC 顺时针，必须关背面剔除
+        glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         shader.bind();
@@ -119,6 +121,7 @@ public class SpriteBatch {
         flush();
         shader.unbind();
         glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
     }
 

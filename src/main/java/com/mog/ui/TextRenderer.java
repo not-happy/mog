@@ -72,6 +72,10 @@ public class TextRenderer {
         proj.setOrtho(0, screenW, screenH, 0, -1, 1);
 
         glDisable(GL_DEPTH_TEST);
+        // 屏幕空间四边形绕序无意义：必须关背面剔除——Renderer.prepare() 每帧开启
+        // GL_CULL_FACE(GL_BACK)，而 y 向下正交投影下字形四边形在 NDC 里是顺时针，
+        // 不关剔除整个 HUD 会被当背面剔除成透明（黑屏无字事故）
+        glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -145,6 +149,7 @@ public class TextRenderer {
         }
         shader.unbind();
         glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
     }
 
