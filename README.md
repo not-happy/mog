@@ -4,21 +4,45 @@
 
 当前状态：完整引擎底座——渲染（多光源/阴影/PBR+IBL/HDR后处理/粒子）+ ECS(位掩码+稀疏集)/场景图 + 模型加载 + **B阶段**：碰撞检测(AABB/射线拾取/碰撞事件)、骨骼动画(Assimp蒙皮+关键帧插值)、2D精灵批渲染、公告板粒子、A阶段基础设施（固定步长/事件总线/资产管理/字体HUD/音频/存读档）。
 
+游戏层（《曜纪》，设计文档见 [docs/GDD-曜纪.md](docs/GDD-曜纪.md)）：
+- **C1 星系模拟核心 ✅**：三体积分器（种子驱动 Kozai 互倾三重星）、纪元分类、宇宙视角场景（HDR 辉光/运动拖尾/时间控制）、Monte-Carlo 平衡工具
+- **C2 地表场景骨架 ✅**：45° RTS 相机、32×32 建造网格地形、纪元驱动的太阳方向光与色调分级（GDD D5/D7）
+- 三体模拟为 Game 级持久会话（`CosmosSession`）：Tab 切换 地表↔宇宙，模拟不中断——"宇宙视角看到的三星之舞，就是地表经历的天气"
+- C3 建造核心的接口预留见 [docs/C3接口清单.md](docs/C3接口清单.md)
+
 ## 操作方式
 
-| 按键/操作 | 功能 |
+**启动参数**：默认进地表场景；`--cosmos` 直进宇宙视角；`--demo` 进技术演示场（A/B 阶段引擎能力展示）；`--speed=N` 宇宙会话初始倍速（钳制 [0.5, 120]，调试加速用）。
+
+**通用热键**：
+
+| 按键 | 功能 |
 |---|---|
-| `W A S D` | 水平移动（相对朝向） |
-| `空格` / `左Shift` | 上升 / 下降 |
-| `↑ ↓ ← →` 方向键 | 转动视角（键盘替代操作，与鼠标等效） |
-| 鼠标移动 | 转动视角（俯仰限制 ±89°；**远程桌面下不可靠，见排查章节**） |
-| `F1` | 切换鼠标捕获（锁定/释放光标） |
-| `F3` | 切换输入调试日志（原始 dx/dy + yaw/pitch，诊断鼠标漂移用） |
-| `F5` | 开关后处理（泛光/暗角/饱和度），伴随提示音（事件驱动音频演示） |
-| `F6` | 开关背景音乐（程序化合成的和弦软垫） |
-| `F9` / `F10` | 存档 / 读档（`saves/game.json`，恢复实体变换与相机位姿） |
-| 鼠标左键 | 准星拾取（射线-AABB，命中实体名显示在 HUD + 日志） |
+| `Tab` | 切换 地表 ↔ 宇宙视角（Demo 离开后经 Tab 落到地表，不再回来） |
+| `F5` / `F6` | 开关后处理（泛光/暗角/饱和度/纪元色调） / 开关背景音乐 |
+| `F1` / `F3` | 切换鼠标捕获 / 输入调试日志 |
 | `ESC` | 退出 |
+
+**地表场景**（RTS 建造视角）：
+
+| 操作 | 功能 |
+|---|---|
+| `W A S D` | 平移相机焦点（速度随高度缩放） |
+| 滚轮 | 缩放（相机高度 8~80m） |
+| 中键拖拽 | 平移焦点 |
+| 右键拖拽 / `Q` `E` | 旋转偏航（俯角固定 45°） |
+| `空格` / `+` `-` | 暂停 / 倍速×2 / 倍速×0.5（作用于共享的宇宙会话） |
+
+**宇宙场景**（轨道观察视角）：
+
+| 操作 | 功能 |
+|---|---|
+| 左键拖拽 | 旋转轨道相机 |
+| 滚轮 | 缩放 |
+| `空格` / `+` `-` | 暂停 / 倍速（与地表共享同一会话状态） |
+
+**Demo 场景**（漫游）：`WASD` 移动、`空格`/`Shift` 升降、鼠标/方向键转视角、左键准星拾取、`F9`/`F10` 存读档。
+（鼠标移动在远程桌面下不可靠，见排查章节）
 
 ## 日志与崩溃排查
 
@@ -101,6 +125,16 @@ src/main/java/com/mog/
 │   └── Ray.java           # 射线（slab 法射线-AABB 求交）
 ├── input/
 │   └── InputHandler.java  # 轮询式键鼠状态 + 边沿检测 + 鼠标增量
+├── astro/                 # 星系模拟（纯 Java，零 GL/ECS 依赖，《曜纪》C1）
+│   ├── GravitySimulation.java # 三体积分器（自适应子步 + Plummer 软化，种子驱动）
+│   ├── TripleConfigs.java # 混沌构型生成器（Kozai 互倾三重星 / 穿越家族）
+│   ├── TripleState.java   # 三星+行星状态快照
+│   ├── EpochClassifier.java # 纪元分类（序曜/乱曜/寒曜/烈曜/掠曜/三曜凌空/失家）
+│   ├── Epoch.java / EpochType.java / EndingType.java # 纪元与终局数据
+│   ├── HostTracker.java   # 宿主星滞回追踪（易天计数）
+│   ├── FateJudge.java     # 终局判定（坠焚/失家/恒星弹射）
+│   ├── GameCalendar.java  # 文明历（1 游戏年 = 2π 模拟单位 = 360 日）
+│   └── tools/             # MonteCarloTool / ChaoticSpectrumTool（无头平衡性实测）
 ├── render/                # 渲染层（所有 GL 调用集中在这里）
 │   ├── Shader.java        # GLSL 编译/链接/uniform 缓存
 │   ├── ShaderSet.java     # 五条管线着色器（顶点色/纹理/光照/PBR/阴影深度）
@@ -115,28 +149,43 @@ src/main/java/com/mog/
 │   ├── FrameBuffer.java   # 通用 FBO：颜色纹理(可选 RGBA16F HDR) + 深度 Renderbuffer
 │   ├── Environment.java   # IBL：程序化天空 -> 辐照度图/预滤波环境图/BRDF LUT
 │   ├── ParticleEngine.java # 粒子：CPU 模拟(SoA池) + 相机公告板四边形 + 加色混合
+│   ├── TrailRenderer.java # 宇宙拖尾：环形缓冲动态 VBO + 加色混合（DYNAMIC）
+│   ├── GridRenderer.java  # 地表建造网格线：贴地静态 VBO + alpha 混合（关背面剔除）
 │   ├── Skeleton.java      # 骨架：节点树 + 骨骼逆绑定矩阵
 │   ├── AnimationData.java # 动画：TRS 关键帧轨
 │   ├── Animator.java      # 采样器：插值关键帧 -> 骨骼蒙皮矩阵
-│   ├── PostProcessor.java # HDR 后处理链：明亮提取 -> 高斯ping-pong -> 曝光/tonemap/gamma/暗角/饱和度
+│   ├── PostProcessor.java # HDR 后处理链：明亮提取 -> 高斯ping-pong -> 曝光/tonemap/gamma/暗角/饱和度/纪元色调
 │   ├── Camera.java        # 相机数据 + 视图矩阵
-│   └── Renderer.java      # 两遍渲染：光空间深度遍 + 主遍（面向 World）
+│   └── Renderer.java      # 两遍渲染：光空间深度遍（正交参数可调）+ 主遍（面向 World）
 └── game/                  # 游戏层
-    ├── Light.java         # 纯数据：方向光
+    ├── Light.java         # 纯数据：方向光（intensity 可就地改写——地表太阳每步变化）
     ├── PointLight.java    # 纯数据：点光源（位置/颜色/衰减）
     ├── SaveManager.java   # 存读档：实体变换/轨道角/相机位姿 <-> JSON
-    ├── CameraController.java # 相机行为：WASD 漫游 + 鼠标/方向键视角
-    └── DemoScene.java     # 世界构建器：创建实体挂组件、注册系统、持有资源所有权
+    ├── CameraController.java # Demo 漫游相机：WASD + 鼠标/方向键视角
+    ├── CameraRig.java     # 相机装备接口（update 走帧步长，与固定步长模拟解耦）
+    ├── OrbitCameraRig.java # 宇宙轨道相机（球面坐标，左键拖拽旋转）
+    ├── RtsCameraRig.java  # 地表 45° RTS 相机（焦点+高度+偏航，指数平滑，边界钳制）
+    ├── CosmosSession.java # 三体模拟会话（Game 级持久唯一真源：模拟/纪元/拖尾缓冲/时间控制）
+    ├── CosmosScene.java   # 宇宙场景：轨道线球体 + 拖尾 + 会话视图
+    ├── CosmosViewSystem.java # 会话 -> ECS 视图同步（薄壳系统，仅注册进宇宙 World）
+    ├── SurfaceScene.java  # 地表场景（C2 骨架）：网格地形 + 占位建筑 + 纪元氛围
+    ├── SurfaceSky.java    # 静态工具：三体模拟 -> 地表太阳方向/颜色/强度
+    ├── EpochPalette.java  # 静态调色板：7 纪元 -> 阳光色/色调分级参数（GDD D7）
+    ├── BuildGrid.java     # 静态工具：32×32 建造网格换算（worldToCell/cellToWorld/snap）
+    ├── TerrainBuilder.java # 静态工具：种子化缓丘高度场 -> 地形网格 + heightAt 查询
+    └── DemoScene.java     # 技术演示场（--demo）：A/B 阶段引擎能力展示
 ```
 
 ### ECS 数据流
 
 ```
-DemoScene.init()  →  World（实体 + 组件 + 系统）
-Game.loop 每帧    →  world.update(dt)：SpinSystem → OrbitSystem → TransformSystem（层级世界矩阵）
-                  →  renderer.renderShadowDepthPass(world, ...)  深度遍（DepthMap FBO）
-                  →  post.beginScene() + renderer.render(...)    场景遍（SceneFBO）
-                  →  post.process()                              后处理链（bright→blur×6→composite→屏幕）
+Scene.init()（Demo/Surface/Cosmos）→  World（实体 + 组件 + 系统）
+Game.loop 每帧 →  cosmos.tick(FIXED_DT)（固定步长，先于场景——模拟跨场景持久）
+               →  world.update(dt)：场景各自注册的系统（如 TransformSystem 层级世界矩阵）
+               →  renderer.renderShadowDepthPass(world, ...)  深度遍（DepthMap FBO）
+               →  post.beginScene() + renderer.render(...)    场景遍（SceneFBO）
+               →  scene.renderOverlay(...)                     叠加遍（拖尾/建造网格线）
+               →  post.process()                               后处理链（bright→blur×6→composite(含纪元色调)→屏幕）
 ```
 
 ### 管线选择规则（Renderer）
@@ -203,12 +252,14 @@ Game.loop 每帧    →  world.update(dt)：SpinSystem → OrbitSystem → Trans
 - `glReadPixels` 在 Mesa-d3d12/WARP 上会挂起（PostProcessor 像素自检已停用，真实 GPU 可恢复）
 - `GL_POINTS` 点精灵绘制会挂起（粒子已改用公告板四边形，这也是商业引擎主流做法）
 
-### 后续（C 阶段候选：类型分叉）
+### C 阶段：《曜纪》技术线（GDD §7，进行中）
 
-- **C-MC 体素线**：区块系统/体素网格化(greedy meshing)/噪声地形生成/光照传播(BFS)/方块交互/区域存档
-- **C-暗黑 ARPG 线**：NavMesh+A* 寻路/等距相机/随机地牢/战利品背包
-- **C-塞尔达线**：第三人称相机/角色物理深化/动画混合树/交互任务系统
-- **C-DNF 线**：帧数据系统(前摇/判定框/取消窗口)/多图层横版场景/连招技能树
+| # | 里程碑 | 状态 |
+|---|---|---|
+| C1 | 星系模拟核心：三体积分器/纪元分类/宇宙视角场景 | ✅（含 S1 测量工具、S2 玩法层事件链） |
+| C2 | 地表场景骨架：45° RTS 相机/建造网格地形/纪元氛围 | ✅（骨架完成；无缝缩放过渡未做，现为 Tab 硬切换） |
+| C3 | 建造核心：网格放置/拆除、资源节点、采集者寻路、生产链 | ⏳ 接口预留见 [docs/C3接口清单.md](docs/C3接口清单.md) |
+| C4+ | 人口气候 / UI 控件库 / 研究成就 / 终局流程 | 未开始 |
 
 ## 资源目录
 
